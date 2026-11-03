@@ -1,19 +1,22 @@
-"""Reusable custom widgets: anime cards and download rows."""
+"""Reusable custom widgets: anime cards, episode list and download rows."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRect, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
     QMenu,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
     QWidgetAction,
@@ -21,7 +24,143 @@ from PySide6.QtWidgets import (
 
 from .models import Anime
 from .net import AnimeSaturnClient
+from .theme import ACCENT, ACCENT_HOVER
 from .workers import PosterWorker
+
+class EpisodeList(QListWidget):
+    """La lista degli episodi, con un ▶ cliccabile su ogni riga.
+
+    Gemella della riga episodio dell'app Android, che è una spunta per i download con un
+    tasto play di fianco. Qui la spunta resta quella di Qt e il play è **disegnato**, non
+    un widget per riga: un anime lungo ha più di mille episodi, e mille pulsanti veri si
+    pagherebbero in attesa e in memoria a ogni apertura della scheda. Disegnarlo non
+    costa niente e si comporta come un pulsante, perché il clic in quella colonna non
+    arriva alla spunta — chi vuole guardare un episodio non sta scegliendo cosa scaricare.
+    """
+
+    #: L'episodio di cui si è premuto il play.
+    play_requested = Signal(object)
+
+    #: Larghezza della colonna del play. Larga abbastanza da prenderci dentro senza
+    #: mirare, che è il minimo per qualcosa che si clicca mille volte.
+    COLUMN = 38
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._hovered = -1
+        self._pressed = -1
+        # Serve a sapere quando il puntatore entra nella colonna: senza, il ▶ resterebbe
+        # spento e si leggerebbe come una decorazione invece che come un comando.
+        self.setMouseTracking(True)
+        self.setItemDelegate(_PlayColumn(self))
+
+    # ------------------------------------------------------------------ #
+    def play_rect(self, row: QRect) -> QRect:
+        """La parte della riga ``row`` occupata dal play."""
+        return QRect(
+            row.right() - self.COLUMN + 1, row.top(), self.COLUMN, row.height()
+        )
+
+    def hovered_row(self) -> int:
+        """La riga il cui play è sotto il puntatore, o ``-1``."""
+        return self._hovered
+
+    def _play_row_at(self, point) -> int:
+        """L'indice della riga il cui play sta sotto ``point``, o ``-1``."""
+        item = self.itemAt(point)
+        if item is None:
+            return -1
+        if not self.play_rect(self.visualItemRect(item)).contains(point):
+            return -1
+        return self.row(item)
+
+    # ------------------------------------------------------------------ #
+    def mouseMoveEvent(self, event) -> None:
+        row = self._play_row_at(event.position().toPoint())
+        if row != self._hovered:
+            self._hovered = row
+            self.viewport().update()
+            if row >= 0:
+                self.setCursor(Qt.PointingHandCursor)
+            else:
+                self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if self._hovered != -1:
+            self._hovered = -1
+            self.viewport().update()
+        self.unsetCursor()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        row = self._play_row_at(event.position().toPoint())
+        if row >= 0 and event.button() == Qt.LeftButton:
+            self._pressed = row
+            episode = self.item(row).data(Qt.UserRole)
+            if episode is not None:
+                self.play_requested.emit(episode)
+            return  # non passa oltre: la spunta non si muove
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        """Il rilascio sul play si ingoia come la pressione.
+
+        Non è simmetria per eleganza: lasciandolo passare, la lista vedrebbe un rilascio
+        senza la pressione che lo precede, e Qt usa proprio quella coppia per decidere se
+        muovere la spunta. Il risultato era che il primo clic su una casella **dopo** un
+        play non faceva niente, e l'utente lo avrebbe scoperto accorgendosi che i
+        download non partivano.
+        """
+        if self._pressed >= 0:
+            self._pressed = -1
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        """Due clic rapidi sul play aprono un player, non due.
+
+        Il secondo clic arriva come doppio clic, che altrove su questa lista è la vecchia
+        scorciatoia per guardare l'episodio: sul play quella scorciatoia farebbe partire
+        una seconda finestra sullo stesso episodio.
+        """
+        row = self._play_row_at(event.position().toPoint())
+        if row >= 0:
+            self._pressed = row  # così anche il rilascio che segue resta qui
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+class _PlayColumn(QStyledItemDelegate):
+    """Disegna il ▶ di :class:`EpisodeList`, e tiene il testo lontano da lui."""
+
+    def __init__(self, view: EpisodeList) -> None:
+        super().__init__(view)
+        self._view = view
+
+    def sizeHint(self, option, index) -> QSize:
+        # Un po' più alta del necessario: la riga è anche un bersaglio da cliccare, e
+        # alla distanza di una riga di testo si sbaglia episodio.
+        hint = super().sizeHint(option, index)
+        return QSize(hint.width(), hint.height() + 8)
+
+    def paint(self, painter, option, index) -> None:
+        # Il rettangolo del testo si restringe, il glifo non si sposta: su una riga lunga
+        # («⏸ incompleto — riprendi») le due cose finirebbero una sopra l'altra.
+        testo = QStyleOptionViewItem(option)
+        testo.rect = QRect(option.rect)
+        testo.rect.setRight(option.rect.right() - self._view.COLUMN)
+        super().paint(painter, testo, index)
+
+        acceso = self._view.hovered_row() == index.row()
+        painter.save()
+        painter.setPen(QColor(ACCENT_HOVER if acceso else ACCENT))
+        font = painter.font()
+        font.setPointSizeF(font.pointSizeF() + (2.0 if acceso else 0.5))
+        painter.setFont(font)
+        painter.drawText(self._view.play_rect(option.rect), Qt.AlignCenter, "▶")
+        painter.restore()
+
 
 
 class MultiSelectDropdown(QPushButton):
