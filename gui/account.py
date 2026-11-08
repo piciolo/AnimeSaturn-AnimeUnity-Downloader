@@ -148,12 +148,26 @@ class AccountDialog(QDialog):
             # credenziale, e da sola non apre niente.
             self.email_input.setText(config.last_email)
         if signed_in and not config.email_verified:
-            self.verify_note.setText(
-                "⚠  Indirizzo non confermato. La sincronizzazione funziona, ma finché "
-                "non confermi non potrai reimpostare la password se la dimentichi: il "
-                "link arriverebbe a un indirizzo che forse non è il tuo. Controlla la "
-                "posta, anche quella indesiderata."
-            )
+            # Dire che l'email è già partita, e dove cercarla, non è un dettaglio: senza
+            # quella frase il primo gesto è premere «Rimanda», cioè chiederne una seconda
+            # pochi secondi dopo la prima, e Firebase blocca con «troppi tentativi».
+            problema = self.client.verification_error
+            if problema:
+                self.verify_note.setText(
+                    f"⚠  Non ho potuto mandare l'email di verifica: {problema}\n"
+                    "Riprova fra qualche minuto con «Rimanda email di verifica». "
+                    "Finché l'indirizzo non è confermato non potrai reimpostare la "
+                    "password se la dimentichi."
+                )
+            else:
+                self.verify_note.setText(
+                    f"⚠  Email di verifica inviata a {config.email}: aprila e torna "
+                    "qui. Cercala anche nella posta indesiderata — il mittente è un "
+                    "indirizzo di Firebase, e spesso finisce lì.\n"
+                    "La sincronizzazione funziona già. Ma finché non confermi non "
+                    "potrai reimpostare la password se la dimentichi: il link "
+                    "arriverebbe a un indirizzo che forse non è il tuo."
+                )
         self.verify_note.setVisible(signed_in and not config.email_verified)
         if signed_in:
             when = config.last_sync
@@ -260,9 +274,16 @@ class AccountDialog(QDialog):
             self.client.send_email_verification()
         except CloudError as exc:
             self._done()
-            self.status.setText(str(exc))
+            # Qualunque sia il motivo, il consiglio utile è lo stesso: una email può
+            # essere già in viaggio da quando hai creato l'account.
+            self.status.setText(
+                f"{exc}\nSe hai appena creato l'account, un'email di verifica è già "
+                "partita allora: cercala anche nella posta indesiderata prima di "
+                "chiederne un'altra."
+            )
             return
         self._done()
+        self._refresh_state()
         self.status.setText(
             f"Email di verifica inviata a {self.client.config.email}. Controlla anche "
             "la posta indesiderata, poi riapri questa finestra."

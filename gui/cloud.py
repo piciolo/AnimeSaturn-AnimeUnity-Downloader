@@ -200,6 +200,12 @@ class CloudClient:
         self._client = httpx.Client(timeout=_TIMEOUT)
         self._access_token = ""
         self._expires_at = 0.0
+        #: Perche' l'email di verifica automatica non e' partita, se non e' partita.
+        #:
+        #: Ingoiare quel fallimento lasciava l'utente davanti a un avviso che chiede di
+        #: controllare una posta dove non era arrivato niente -- e senza alcun modo di
+        #: sapere che il problema era l'invio e non la propria casella.
+        self.verification_error = ""
 
     # ------------------------------------------------------------------ #
     def _auth_call(self, endpoint: str, payload: dict) -> dict:
@@ -230,8 +236,8 @@ class CloudClient:
         # La schermata account mostra l'avviso e offre di rimandarla.
         try:
             self.send_email_verification()
-        except CloudError:
-            pass
+        except CloudError as exc:
+            self.verification_error = str(exc)
 
     def send_password_reset(self, email: str) -> None:
         """Chiede a Firebase il link per reimpostare la password.
@@ -267,6 +273,7 @@ class CloudClient:
         self._auth_call(
             "sendOobCode", {"requestType": "VERIFY_EMAIL", "idToken": self._token()}
         )
+        self.verification_error = ""
 
     def refresh_email_verified(self) -> bool:
         """Chiede a Firebase se l'indirizzo e' stato confermato, e lo ricorda.
