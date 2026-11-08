@@ -748,6 +748,18 @@
       "expect": {
         "toggled_at": 2001.0
       }
+    },
+    {
+      "name": "un orario scritto come true non e' un orario: vale come assente",
+      "action": "toggle",
+      "record": {
+        "is_favourite": true,
+        "toggled_at": true
+      },
+      "now": 1.0,
+      "expect": {
+        "toggled_at": 1.0
+      }
     }
   ]
 }

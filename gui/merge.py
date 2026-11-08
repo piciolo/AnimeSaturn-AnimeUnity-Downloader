@@ -54,6 +54,18 @@ def _to_int(value: object, default: int = 0) -> int:
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
+    """Un orario come numero, qualunque cosa ci sia scritto nel file.
+
+    Una regola sola per cronologia, preferiti e fusione: l'ordine degli elenchi dipende
+    da questa, e per un periodo i preferiti ne hanno avuta una loro -- che accettava NaN.
+    """
+    # ``True`` non e' un orario, ed e' l'unico valore non numerico che ``float()``
+    # accetterebbe: tornerebbe 1.0, cioe' un secondo dopo il 1970. Il gemello Dart lo
+    # rifiuta da sempre, perche' ``true`` non e' un ``num``; finche' Python lo accettava
+    # le due app NON concordavano su questo dato, che e' precisamente cio' che i vettori
+    # condivisi esistono per impedire. Ora concordano, e un caso lo prova.
+    if isinstance(value, bool):
+        return default
     try:
         number = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):

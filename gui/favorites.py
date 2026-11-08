@@ -21,25 +21,9 @@ from pathlib import Path
 from PySide6.QtCore import QStandardPaths
 
 from .canonical import canonical_key
-from .merge import as_toggled, merge_favourite
+from .merge import _to_float, as_toggled, merge_favourite
 from .net import sanitize_name
 from .portal_filter import entries_for_portal, entries_outside_portal, entry_portal
-
-
-def _to_float(value: object, default: float = 0.0) -> float:
-    """Un orario come numero, qualunque cosa ci sia scritto nel file.
-
-    Gemello di quello della cronologia e di ``_toDouble`` nell'app Android: i tre
-    devono concordare, perche' e' da questo che dipende l'ordine degli elenchi.
-    """
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(str(value))
-    except (TypeError, ValueError):
-        return default
 
 
 class FavoritesStore:
