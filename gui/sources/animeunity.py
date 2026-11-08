@@ -54,18 +54,64 @@ _GENRE_MAP = {
 }
 
 
+#: Quanti record consegna l'archivio per richiesta.
+_PAGINA_GREZZA = 30
+
+#: Quanti record grezzi si leggono al massimo per una pagina, quando il doppiaggio si
+#: deve scartare qui.
+#:
+#: L'archivio sa vincolare solo «doppiati»: per «solo sottotitolati» i doppiati arrivano
+#: comunque e vanno scartati dopo, quindi una pagina da 30 ne consegnerebbe meno di 30 --
+#: numero che l'interfaccia legge come «finito». Il pulsante «Carica altri» sparirebbe col
+#: catalogo ancora pieno, e si leggerebbe «questi sono tutti»: dati che sembrano assenti,
+#: il difetto peggiore di tutti, e lo stesso che si e' appena chiuso altrove.
+#:
+#: La finestra ha ampiezza FISSA e si legge intera: cosi' le pagine non si sovrappongono
+#: e non lasciano buchi, e la sorgente non deve ricordare nulla fra una richiesta e
+#: l'altra. Costa tre richieste invece di una, ma solo per «solo sottotitolati».
+#: Resta scoperto un caso -- una finestra dove i doppiati superano i due terzi -- e li'
+#: «Carica altri» sparisce ancora troppo presto.
+_FINESTRA_GREZZA = 90
+
+
+def _doppiato(record: dict) -> bool:
+    """Se un record dell'archivio e' doppiato in italiano.
+
+    Una regola sola, per il filtro e per la scheda. Scritte separate, basterebbe che una
+    leggesse ``1`` e l'altra ``True`` perche' una scheda si dichiari doppiata e il filtro
+    «solo sottotitolati» la tenga comunque.
+    """
+    return bool(record.get("dub"))
+
+
 def _tradotti(valori: list[str], tabella: dict[str, str]) -> list[str] | None:
     """I valori tradotti, o ``None`` se anche uno solo non ha corrispondenza."""
     fuori = [tabella.get(str(v)) for v in valori]
     return None if any(x is None for x in fuori) else fuori
 
 
-def _record_passa(record: dict, richiesti: dict[str, list[str]]) -> bool:
+def _record_passa(
+    record: dict, richiesti: dict[str, list[str]], dub: str = ""
+) -> bool:
     """Controlla il record contro i filtri, qualunque cosa abbia fatto il portale.
 
     E' la garanzia: l'API accetta un valore solo per campo, quindi con una scelta
     multipla il vincolo non puo' viaggiare nella richiesta. Qui invece vale sempre.
     """
+    # Il doppiaggio: l'archivio sa vincolare solo «doppiati». Con ``dubbed`` a ``0``, a
+    # ``false`` o col campo omesso risponde in modo identico -- misurato contro il sito,
+    # non dedotto: cercando «naruto» tornavano 12 doppiati su 30 in tutti e tre i casi.
+    # Percio' «solo sottotitolati» sembrava attivo e non mordeva, ed e' peggio di un
+    # filtro assente: un elenco vuoto lo noti, dei risultati che sembrano giusti no.
+    #
+    # Il caso ``"1"`` oggi non serve, perche' quello il portale lo rispetta davvero; e'
+    # qui perche' il giorno che smettesse, questo filtro sbaglierebbe chiudendo invece
+    # che aprendo.
+    if dub == "0" and _doppiato(record):
+        return False
+    if dub == "1" and not _doppiato(record):
+        return False
+
     anni = richiesti.get("year") or []
     if anni and str(record.get("date") or "")[:4] not in {str(a) for a in anni}:
         return False
@@ -110,6 +156,28 @@ class AnimeUnitySource(AnimeSource):
         self.client = client or AnimeUnityClient(base_url or DEFAULT_BASE_URL)
 
     # ------------------------------------------------------------------ #
+    def expressible_filters(self) -> dict[str, set[str] | None]:
+        """La lingua originale qui non esiste; degli altri, solo i valori tradotti.
+
+        Si ricava dalle tabelle di traduzione invece di elencare i casi a mano: il giorno
+        che si verifica come questo portale chiama «Magia», quella voce torna
+        selezionabile da se'. Un elenco scritto a mano sarebbe invecchiato in silenzio,
+        ed e' lo stesso difetto che questa modifica esiste per chiudere.
+
+        Attenzione a cosa dice e cosa non dice: i generi fuori tabella non sono
+        impossibili, sono **non ancora tradotti** -- il filtro dei generi su questo
+        portale lo applica l'app sui risultati, perche' l'archivio risponde con un errore
+        a quel campo. La lingua invece non tornera' mai: il dato non c'e'.
+        """
+        return {
+            "language": None,
+            "type": set(_TYPE_MAP),
+            "state": set(_STATE_MAP),
+            "season": set(_SEASON_MAP),
+            "category": set(_GENRE_MAP),
+        }
+
+    # ------------------------------------------------------------------ #
     def search(
         self,
         title: str | None = None,
@@ -120,7 +188,7 @@ class AnimeUnitySource(AnimeSource):
         filters: dict | None = None,
     ) -> list[dict]:
         # AnimeUnity pages by offset rather than page number, and browses by "order".
-        offset = max(page - 1, 0) * 30
+        offset = max(page - 1, 0) * _PAGINA_GREZZA
         order = {"ongoing": "Popolarita", "newest": "Ultime Uscite"}.get(sort, False)
 
         richiesti = {k: [str(x) for x in v] for k, v in (filters or {}).items() if v}
@@ -145,17 +213,38 @@ class AnimeUnitySource(AnimeSource):
                 return ""
             return tabella[valori[0]] if tabella else valori[0]
 
-        records = self.client.search(
-            title or None,
-            order=order,
-            offset=offset,
-            dubbed=(dub == "1"),
-            anime_type=uno("type", _TYPE_MAP),
-            year=uno("year"),
-            status=uno("state", _STATE_MAP),
-            season=uno("season", _SEASON_MAP),
-        )
-        records = [r for r in records if _record_passa(r, richiesti)]
+        def chiedi(scostamento: int) -> list[dict]:
+            return self.client.search(
+                title or None,
+                order=order,
+                offset=scostamento,
+                dubbed=(dub == "1"),
+                anime_type=uno("type", _TYPE_MAP),
+                year=uno("year"),
+                status=uno("state", _STATE_MAP),
+                season=uno("season", _SEASON_MAP),
+            )
+
+        records: list[dict] = []
+        if dub == "0":
+            # Scartando i doppiati qui, una pagina sola ne consegnerebbe meno di 30 e
+            # l'interfaccia la leggerebbe come l'ultima: si legge percio' l'intera
+            # finestra.
+            #
+            # Tutta, sempre -- e non «finche' la pagina non e' piena». Fermarsi prima
+            # lascerebbe i record non letti della finestra in un buco fra questa pagina
+            # e la prossima, che parte dalla finestra successiva: anime che non
+            # comparirebbero da nessuna parte. Un catalogo bucato e' peggio di un
+            # catalogo che sembra finito, ed e' il difetto che si sta chiudendo, non uno
+            # da aprire. L'unica uscita e' l'archivio che finisce.
+            base = max(page - 1, 0) * _FINESTRA_GREZZA
+            for salto in range(0, _FINESTRA_GREZZA, _PAGINA_GREZZA):
+                lotto = chiedi(base + salto)
+                records.extend(r for r in lotto if _record_passa(r, richiesti, dub))
+                if len(lotto) < _PAGINA_GREZZA:
+                    break
+        else:
+            records = [r for r in chiedi(offset) if _record_passa(r, richiesti, dub)]
         return self.tag([self._to_card(r) for r in records])
 
     def suggest(self, query: str) -> list[dict]:
@@ -166,6 +255,12 @@ class AnimeUnitySource(AnimeSource):
             records = self.client.search(query, offset=0)
         except Exception:  # noqa: BLE001 - suggestions are a convenience, never fatal
             return []
+        # Le stesse chiavi che emette `search`, non altre. Qui `episodes_count` si
+        # chiamava `episodes` e `dubbed` mancava del tutto: chi consuma un
+        # suggerimento legge i nomi della ricerca, quindi cliccarne uno sollevava
+        # KeyError. Sotto l'eseguibile, dove non c'e' una console che mostri la
+        # traccia, l'effetto era che il clic non faceva niente -- l'intero menu a
+        # tendina muto, e nessun modo di capire perche'.
         return self.tag(
             [
                 {
@@ -173,7 +268,8 @@ class AnimeUnitySource(AnimeSource):
                     "slug": card["slug"],
                     "poster": card["poster"],
                     "year": card["year"],
-                    "episodes": card["episodes_count"],
+                    "episodes_count": card["episodes_count"],
+                    "dubbed": card["dubbed"],
                     "type": card["type"],
                 }
                 for card in (self._to_card(r) for r in records[:10])
@@ -238,7 +334,7 @@ class AnimeUnitySource(AnimeSource):
             "title": str(title).strip(),
             "poster": record.get("imageurl") or "",
             "type": record.get("type") or "",
-            "dubbed": bool(record.get("dub")),
+            "dubbed": _doppiato(record),
             "episodes_count": int(record.get("episodes_count") or 0),
             "year": str(record.get("date") or ""),
             "score": str(record.get("score") or ""),

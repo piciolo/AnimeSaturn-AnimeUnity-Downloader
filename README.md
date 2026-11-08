@@ -74,10 +74,10 @@
   e **anni**, con **ordinamento** (rilevanza, ultime aggiunte, A–Z, Z–A, meno recenti).
 - 🇮🇹 Filtro **Sub/Dub**: tutti, solo **doppiati (ITA)** o solo **sottotitolati**.
 - 📺 Scheda anime con **trama, copertina e lista episodi**.
-- ▶️ **Anteprima in streaming**: guarda l'episodio **dentro l'app** (player integrato con
+- ▶️ **Guarda subito**: l'episodio parte **dentro l'app** (player integrato con
   play/pausa, avanzamento, volume, schermo intero) per capire se ti piace **prima** di
-  scaricarlo — *doppio clic* su un episodio o pulsante **👁 Anteprima**; dal player puoi
-  anche scaricarlo con un clic.
+  scaricarlo — il **▶** che compare su ogni episodio, un *doppio clic* sulla riga, o
+  **Invio** se stai usando la tastiera; dal player puoi anche scaricarlo con un clic.
 - ⏯️ **Continua a guardare**: l'app ricorda dove eri arrivato — anime, *episodio 2 di 5*
   e il **minuto** — e **riprende da lì**, sia in streaming sia dai file scaricati; a fine
   episodio passa automaticamente al successivo.
@@ -131,9 +131,14 @@ python app.py
 7. Nella scheda **Download** segui l'avanzamento; puoi **annullare** un download in corso
    o **rimuovere** quelli finiti, e regolare i download **simultanei**.
 
-> I filtri sono quelli di AnimeSaturn. AnimeUnity non sa esprimerli tutti (per esempio la
-> lingua originale): in quel caso l'app te lo dice, invece di mostrarti un elenco vuoto
-> come se non ci fossero risultati.
+> I filtri sono quelli di AnimeSaturn. Scegliendo **AnimeUnity**, quelli che lì non
+> esistono si **spengono da soli** — la *lingua originale* del tutto, e le poche voci di
+> genere e stato che quel portale non sa nominare — e passandoci sopra leggi perché.
+> Tornando su AnimeSaturn si riaccendono. Così non puoi chiedere qualcosa che
+> risponderebbe con un elenco vuoto, come se non ci fossero risultati.
+>
+> Se uno di quei filtri era già attivo, cambiando portale viene tolto: il contatore sul
+> pulsante **🎛 Filtri** scende da sé, e il filtro resta lì grigio a dirti perché.
 
 ## 💾 Dove finiscono i file
 

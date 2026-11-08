@@ -35,7 +35,8 @@ from .account import AccountDialog
 from .cloud import CloudClient, CloudConfig, SyncWorker
 from .favorites import FavoritesStore
 from .sources import SourceRegistry
-from .history import WatchHistory, format_progress
+from .history import WatchHistory, format_progress, sibling_watch_path
+from .portal_filter import LEGACY_PORTAL, entry_portal
 from .models import Anime, Episode
 from .portal_picker import app_title, choose_portal, portal_label
 from .net import (
@@ -91,6 +92,42 @@ FILTER_FIELDS = (
     ("language", "Lingua", LANGUAGE_OPTIONS),
 )
 
+#: Come nominare un filtro dentro «… non sa filtrare per X». Stesse parole dell'app
+#: Android, cosi' le due meta' danno la stessa spiegazione della stessa cosa.
+_FILTER_REASONS = {
+    "category": "genere",
+    "type": "tipo",
+    "state": "stato",
+    "season": "stagione",
+    "language": "lingua originale",
+    "year": "anno",
+}
+
+
+def _prune_filters(filters: dict, esprimibili: dict) -> dict:
+    """I filtri senza i valori che il portale attivo non sa esprimere.
+
+    Gemello di ``MultiSelectDropdown.restrict`` per lo stato della ricerca: il pannello
+    e' la verita' per la ricerca *successiva*, ma ``_query`` conserva quella in corso e
+    il cambio di portale rilancia da li'. Spegnere la tendina e lasciare il vincolo
+    avrebbe prodotto lo stesso elenco vuoto di prima, col colpevole ora invisibile.
+
+    Si potano i valori, non le chiavi: togliere l'intero genere perche' uno dei due
+    scelti non si traduce allargherebbe la ricerca di nascosto.
+    """
+    tenuti: dict[str, list[str]] = {}
+    for chiave, valori in (filters or {}).items():
+        if chiave not in esprimibili:
+            tenuti[chiave] = list(valori)
+            continue
+        consentiti = esprimibili[chiave]
+        if consentiti is None:
+            continue
+        restanti = [v for v in valori if v in consentiti]
+        if restanti:
+            tenuti[chiave] = restanti
+    return tenuti
+
 
 def _clear_layout(layout) -> None:
     """Remove and delete every widget in a layout."""
@@ -108,6 +145,18 @@ def _clear_widgets_keep_stretch(layout) -> None:
         if widget is not None:
             layout.takeAt(i)
             widget.deleteLater()
+
+
+#: Gli elenchi vuoti. Due testi, non uno: «non hai mai salvato niente» e
+#: «niente su questo portale» sono affermazioni diverse, e dire la prima
+#: quando vale la seconda si legge come dati perduti.
+_VUOTO_PREFERITI = (
+    "Nessun preferito. Apri un anime e tocca ☆ Preferiti per salvarlo qui."
+)
+_VUOTO_CONTINUA = (
+    "Non stai guardando nulla. Apri un episodio in anteprima o riproduci un "
+    "download: comparirà qui, pronto da riprendere."
+)
 
 
 class MainWindow(QMainWindow):
@@ -152,10 +201,18 @@ class MainWindow(QMainWindow):
             animeunity_base_url=self.settings.animeunity_base_url,
             only_portal=self.portal,
         )
+        # Un identificativo che questa versione non conosce vale «tutti»: il registro
+        # lo trattava gia' cosi', gli elenchi no, e si svuotavano. Normalizzato qui, le
+        # due meta' concordano e l'intestazione dice il vero.
+        self.portal = self.sources.known_portal(self.portal)
+        self.sources.only_portal = self.portal
         self.history = WatchHistory()
         self.favorites = FavoritesStore()
         self.cloud = CloudClient(CloudConfig())
         self._account_dialog = None
+        # Una ricerca e' caduta perche' nessun portale attivo ha risposto, e si sta
+        # cercando un dominio nuovo: se lo si trova, quella ricerca va rifatta.
+        self._retry_after_heal = False
 
         self._refresh_app_title()
         self.resize(1180, 820)
@@ -183,6 +240,14 @@ class MainWindow(QMainWindow):
         # Rebuilt in place, so the next search already uses the new address
         # without restarting.
         self.sources.set_animeunity_base_url(base_url)
+        # Se una ricerca era caduta per irraggiungibilita', ora c'e' un indirizzo
+        # nuovo da provare: si rifa' quella, una volta sola. Il contrario -- lasciare
+        # all'utente il compito di ripremere Cerca -- significherebbe che la cura ha
+        # funzionato e nessuno se ne accorge.
+        if self._retry_after_heal:
+            self._retry_after_heal = False
+            if getattr(self, "_query", None):
+                self._spawn_search()
 
     # ------------------------------------------------------------------ #
     # UI construction
@@ -261,12 +326,17 @@ class MainWindow(QMainWindow):
         da sotto la scheda di un anime per rifare una griglia che non ha chiesto sarebbe
         un dispetto, e la ricerca successiva parte comunque dal portale nuovo.
         """
-        chosen = choose_portal(self.settings, current=self.portal, parent=self)
+        chosen = self.sources.known_portal(
+            choose_portal(self.settings, current=self.portal, parent=self)
+        )
         if chosen == self.portal:
             return
         self.portal = chosen
         self.sources.only_portal = chosen
         self._refresh_portal_button()
+        # Prima di rilanciare: i filtri che il portale nuovo non sa esprimere vanno
+        # spenti nel pannello *e* togliti dalla ricerca, o morderebbero da invisibili.
+        self._apply_portal_to_filters()
         self._refresh_watch_views()
         if self.tabs.currentIndex() == self._favorites_tab_index:
             self._refresh_favorites()
@@ -460,6 +530,9 @@ class MainWindow(QMainWindow):
         apply_btn.clicked.connect(self._run_query)
         buttons.addWidget(apply_btn)
         outer.addLayout(buttons)
+        # Col portale gia' applicato: un comando che non funziona non va offerto
+        # nemmeno per il primo istante.
+        self._apply_portal_to_filters()
         return self.filter_panel
 
     def _build_catalog_tab(self) -> QWidget:
@@ -762,9 +835,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(container)
         layout.addWidget(scroll, 1)
 
-        self.favorites_empty = QLabel(
-            "Nessun preferito. Apri un anime e tocca ☆ Preferiti per salvarlo qui."
-        )
+        self.favorites_empty = QLabel(_VUOTO_PREFERITI)
         self.favorites_empty.setObjectName("Muted")
         self.favorites_empty.setAlignment(Qt.AlignCenter)
         self.favorites_empty.setWordWrap(True)
@@ -795,10 +866,17 @@ class MainWindow(QMainWindow):
         self.favorites_status.setText(
             f"{len(entries)} preferiti" if entries else ""
         )
-        self.favorites_empty.setVisible(not entries)
-        self._outside_note(
-            self.favorites_outside, self.favorites.outside_portal(self.portal)
+        fuori = self.favorites.outside_portal(self.portal)
+        # Con delle voci altrove, «Nessun preferito» e' falso: ce ne sono, su un altro
+        # portale. Accanto compare anche l'avviso che dice quante, e le due scritte
+        # insieme si contraddicevano -- «non ne hai» e «ne hai 3 altrove».
+        self.favorites_empty.setText(
+            f"Nessun preferito su {portal_label(self.portal)}."
+            if fuori and self.portal is not None
+            else _VUOTO_PREFERITI
         )
+        self.favorites_empty.setVisible(not entries)
+        self._outside_note(self.favorites_outside, fuori)
 
     # ------------------------------------------------------------------ #
     # Genres tab (mirrors the site's /genres page)
@@ -932,10 +1010,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(container)
         layout.addWidget(scroll, 1)
 
-        self.continue_empty = QLabel(
-            "Non stai guardando nulla. Apri un episodio in anteprima o riproduci un "
-            "download: comparirà qui, pronto da riprendere."
-        )
+        self.continue_empty = QLabel(_VUOTO_CONTINUA)
         self.continue_empty.setObjectName("Muted")
         self.continue_empty.setAlignment(Qt.AlignCenter)
         self.continue_empty.setWordWrap(True)
@@ -1038,10 +1113,14 @@ class MainWindow(QMainWindow):
             self.continue_layout.insertWidget(
                 self.continue_layout.count() - 1, self._continue_row(entry)
             )
-        self.continue_empty.setVisible(not entries)
-        self._outside_note(
-            self.continue_outside, self.history.outside_portal(self.portal)
+        fuori = self.history.outside_portal(self.portal)
+        self.continue_empty.setText(
+            f"Niente da riprendere su {portal_label(self.portal)}."
+            if fuori and self.portal is not None
+            else _VUOTO_CONTINUA
         )
+        self.continue_empty.setVisible(not entries)
+        self._outside_note(self.continue_outside, fuori)
 
     def _continue_row(self, entry: dict) -> QWidget:
         row = QFrame()
@@ -1114,7 +1193,14 @@ class MainWindow(QMainWindow):
     def _resume_entry(self, entry: dict) -> None:
         number = str(entry.get("episode_number", ""))
         slug = entry.get("slug", "")
-        watch = entry.get("watch_path") or (f"/anime/{slug}/ep-{number}" if slug else "")
+        watch = entry.get("watch_path") or ""
+        # La forma `/anime/<slug>/ep-<n>` e' di AnimeSaturn, quindi si costruisce solo
+        # per le voci che vengono da la' (comprese le vecchie, che non portano il
+        # portale e venivano tutte da la'). Costruirla per una voce di AnimeUnity dava
+        # una stringa che nessun portale sa leggere, e che il resoconto di avanzamento
+        # riscriveva poi nella cronologia al posto di quella buona.
+        if not watch and slug and entry_portal(entry) == LEGACY_PORTAL:
+            watch = f"/anime/{slug}/ep-{number}"
         self._launch_player(
             entry.get("title", ""),
             Episode(number, watch),
@@ -1122,6 +1208,12 @@ class MainWindow(QMainWindow):
             poster=entry.get("poster", ""),
             total=entry.get("total_episodes", 0) or 0,
             resume_ms=entry.get("position_ms", 0) or 0,
+            # Il portale della voce. Senza, l'episodio veniva chiesto al primo
+            # portale qualunque fosse la provenienza: un indirizzo di AnimeUnity
+            # mandato ad AnimeSaturn fallisce sempre, e si ripartiva solo grazie
+            # alla ricerca per titolo -- lenta, e muta quando i due siti scrivono
+            # il nome in lingue diverse. Il play nella scheda lo passava gia'.
+            source_id=entry.get("source_id") or "animesaturn",
         )
 
     def _load_thumb(self, label: QLabel, url: str) -> None:
@@ -1241,9 +1333,15 @@ class MainWindow(QMainWindow):
         return box
 
     def _play_local(self, title: str, label: str, path: str, total: int) -> None:
-        entry = self.history.entry(title)
-        slug = entry.get("slug", "") if entry else ""
-        watch = f"/anime/{slug}/ep-{label}" if slug else ""
+        entry = self.history.entry(title) or {}
+        slug = entry.get("slug", "")
+        # L'indirizzo non si fabbrica dallo slug: la forma /anime/<slug>/ep-<n> e' di
+        # AnimeSaturn, e su AnimeUnity produce una stringa che nessun portale sa
+        # leggere -- che poi finirebbe nella cronologia al posto di quella buona. Si
+        # deriva da quella registrata quando la forma lo permette, altrimenti si
+        # lascia vuota: `record` conserva la vecchia, e il file si riproduce da disco
+        # senza bisogno di nessun indirizzo.
+        watch = sibling_watch_path(entry.get("watch_path", "") or "", str(label))
         self._launch_player(
             title,
             Episode(str(label), watch),
@@ -1251,6 +1349,10 @@ class MainWindow(QMainWindow):
             total=total,
             resume_ms=self.history.resume_position(title, label),
             local_path=path,
+            # Il portale registrato; se la riga non c'e' ancora, quello in uso. Senza,
+            # la riga che nasce guardando un file finirebbe fra le voci vecchie, cioe'
+            # su AnimeSaturn, e sparirebbe dall'elenco nell'istante in cui si crea.
+            source_id=entry.get("source_id", "") or (self.portal or ""),
         )
 
     # ------------------------------------------------------------------ #
@@ -1292,10 +1394,14 @@ class MainWindow(QMainWindow):
         self._suggest_map = {}
         titles: list[str] = []
         for record in results:
-            title = record["title"]
+            # Letture morbide: i suggerimenti arrivano da piu' portali, e un campo che
+            # un portale non riempie non deve far cadere la tendina di tutti.
+            title = str(record.get("title") or "")
+            if not title:
+                continue
             if title in self._suggest_map:  # disambiguate rare duplicate titles
-                year = record["year"]
-                title = f"{title}  ·  {year}" if year else f"{title} ({record['slug']})"
+                year = record.get("year") or ""
+                title = f"{title}  ·  {year}" if year else f"{title} ({record.get('slug', '')})"
             self._suggest_map[title] = record
             titles.append(title)
         self._suggest_model.setStringList(titles)
@@ -1309,22 +1415,60 @@ class MainWindow(QMainWindow):
         if not record:
             return
         self._suggest_timer.stop()
-        self.search_input.setText(record["title"])
+        self.search_input.setText(str(record.get("title") or ""))
+        # Convertito qui e non nella chiamata: `main_window` non ha un aiutante per
+        # questo, e un conteggio scritto come testo da un portale non deve far
+        # cadere l'apertura della scheda.
+        try:
+            conteggio = int(record.get("episodes_count") or 0)
+        except (TypeError, ValueError):
+            conteggio = 0
         # The suggestion already carries everything the detail header needs, so open it
         # straight away (plot/episodes are then loaded from the anime page as usual).
         self._open_detail(
             Anime(
-                slug=record["slug"],
-                title=record["title"],
-                poster=record["poster"],
-                anime_type=record["type"],
-                dubbed=record["dubbed"],
-                episodes_count=record["episodes_count"],
-                year=record["year"],
+                slug=str(record.get("slug") or ""),
+                title=str(record.get("title") or ""),
+                poster=str(record.get("poster") or ""),
+                anime_type=str(record.get("type") or ""),
+                dubbed=bool(record.get("dubbed")),
+                episodes_count=conteggio,
+                year=str(record.get("year") or ""),
                 score="",
                 source_id=record.get("source_id") or "animesaturn",
             )
         )
+
+    def _apply_portal_to_filters(self) -> None:
+        """Spegne nel pannello i filtri che il portale attivo non sa esprimere.
+
+        Impedire la domanda e' meglio che spiegare la risposta. Finche' il comando
+        restava attivo, chiedere la lingua originale su AnimeUnity tornava un elenco
+        vuoto indistinguibile da «nessun risultato»: l'utente leggeva «questo anime non
+        c'e'» dove la verita' era «qui non si puo' chiedere cosi'», e andava a cercare il
+        guasto nel posto sbagliato.
+
+        Niente messaggi: il pannello **e'** la spiegazione, e resta la' da leggere
+        invece di passare. Che qualcosa sia cambiato si vede comunque dal contatore sul
+        pulsante dei filtri, che scende da se'.
+        """
+        combos = getattr(self, "filter_combos", None)
+        if not combos or getattr(self, "sources", None) is None:
+            return
+        esprimibili = self.sources.expressible_filters()
+        nomi = " / ".join(portal_label(s.id) for s in self.sources.browsing)
+        for chiave, dropdown in combos.items():
+            if chiave not in esprimibili:
+                dropdown.unrestrict()
+                continue
+            quale = _FILTER_REASONS.get(chiave, chiave)
+            dropdown.restrict(
+                esprimibili[chiave], f"{nomi} non sa filtrare per {quale}."
+            )
+        query = getattr(self, "_query", None)
+        if query:
+            query["filters"] = _prune_filters(query.get("filters"), esprimibili)
+        self._update_filter_toggle_text()
 
     def _current_filters(self) -> dict:
         """Return the non-empty advanced-filter selections (dimension -> [values])."""
@@ -1396,6 +1540,7 @@ class MainWindow(QMainWindow):
         )
         worker.signals.results.connect(self._on_search_results)
         worker.signals.error.connect(self._on_search_error)
+        worker.signals.unreachable.connect(self._on_search_unreachable)
         self.io_pool.start(worker)
 
     def _on_search_results(self, token: object, animes: list) -> None:
@@ -1435,6 +1580,40 @@ class MainWindow(QMainWindow):
                 "è stato interrogato: cambia portale in alto per cercare anche lì."
             )
         return "Nessun risultato trovato."
+
+    def _on_search_unreachable(
+        self, token: object, message: str, failed: list
+    ) -> None:
+        """Nessun portale attivo ha risposto: dirlo, e cercare un indirizzo nuovo.
+
+        Finora questo caso tornava una lista vuota e si leggeva «Nessun risultato su
+        AnimeUnity»: una risposta a una domanda mai posta, che manda a cercare il
+        problema nel catalogo invece che nella rete. E, cosa peggiore, la cura del
+        dominio non partiva mai -- era invocata solo all'avvio, quindi un portale che
+        traslocava a meta' sessione restava perduto per tutta la sessione.
+        """
+        if token != self._search_token:
+            return
+        nomi = ", ".join(portal_label(s) for s in failed) or "Nessun portale"
+        # Solo AnimeUnity ha un elenco di domini di ricambio da cui ripartire; per
+        # AnimeSaturn, su questa app, non c'e' niente da cercare, e prometterlo
+        # sarebbe falso.
+        curabili = [s for s in failed if s == "animeunity"]
+        if curabili:
+            self._retry_after_heal = True
+            self._heal_animeunity_domain()
+            coda = (
+                " Sto cercando l'indirizzo aggiornato: se lo trovo, la ricerca "
+                "riparte da sola."
+            )
+        else:
+            coda = " Controlla la connessione e riprova."
+        self.status_label.setText(
+            f"{nomi} non ha risposto, quindi la ricerca non e' nemmeno partita: "
+            f"non e' «nessun risultato».{coda}"
+        )
+        self.load_more_button.setEnabled(True)
+        self.load_more_button.setText("Carica altri risultati")
 
     def _on_search_error(self, token: object, message: str) -> None:
         if token != self._search_token:
@@ -1703,16 +1882,38 @@ class MainWindow(QMainWindow):
         if player.total and target > player.total:
             return  # last episode: nothing to advance to
         number = str(target)
-        watch = player.episode.watch_path
-        if "/ep-" in watch:
-            watch = watch.rsplit("/ep-", 1)[0] + f"/ep-{number}"
-        elif player.slug:
-            watch = f"/anime/{player.slug}/ep-{number}"
+        # Prima si guarda nella lista degli episodi, quando e' quella di quest'anime:
+        # la' c'e' l'indirizzo **vero**, anche su AnimeUnity dove non e' derivabile.
+        watch = self._episode_watch_path(player.anime_title, number)
+        if not watch:
+            # Nessuna lista a disposizione: si deriva solo se la forma lo permette.
+            # Prima qui si fabbricava `/anime/<slug>/ep-<n>` su qualunque portale --
+            # su AnimeUnity una stringa illeggibile, che il player non riusciva a
+            # risolvere e che il resoconto di avanzamento scriveva poi nella
+            # cronologia sopra l'indirizzo che funzionava, degradando la riga anche
+            # per le volte successive. Vuoto costa una ricerca per titolo; inventato
+            # costava la riga.
+            watch = sibling_watch_path(player.episode.watch_path, number)
         player.play_episode(
             Episode(number, watch),
             local_path=self._find_local_file(player.anime_title, number),
             resume_ms=self.history.resume_position(player.anime_title, number),
         )
+
+    def _episode_watch_path(self, anime_title: str, number: str) -> str:
+        """L'indirizzo vero dell'episodio ``number``, se la sua lista e' caricata.
+
+        Vale solo quando la scheda aperta e' di quest'anime: la lista e' una sola, e
+        leggerla per un anime diverso darebbe l'indirizzo di un'altra serie.
+        """
+        anime = self._detail_anime
+        if anime is None or anime.title != anime_title:
+            return ""
+        for i in range(self.episode_list.count()):
+            episode = self.episode_list.item(i).data(Qt.UserRole)
+            if episode is not None and str(episode.number) == number:
+                return episode.watch_path or ""
+        return ""
 
     def _find_local_file(self, title: str, number: str) -> str:
         """Path to the downloaded ``.mp4`` for an episode, or ``""`` if not present."""
@@ -1728,9 +1929,9 @@ class MainWindow(QMainWindow):
             return ""
         return ""
 
-    def _enqueue_one(self, anime_title: str, episode: Episode) -> None:
+    def _enqueue_one(self, anime_title: str, episode: Episode, source_id: str = "") -> None:
         dest_dir = Path(self.settings.download_dir) / sanitize_name(anime_title)
-        self._enqueue_download(anime_title, episode, dest_dir)
+        self._enqueue_download(anime_title, episode, dest_dir, source_id)
         self.tabs.setCurrentIndex(self._downloads_tab_index)
         self._update_empty_queue()
 
@@ -1751,12 +1952,19 @@ class MainWindow(QMainWindow):
         dest_dir = Path(self.settings.download_dir) / sanitize_name(anime.title)
 
         for episode in episodes:
-            self._enqueue_download(anime.title, episode, dest_dir)
+            # Il portale della scheda aperta: e' da la' che vengono questi episodi.
+            self._enqueue_download(anime.title, episode, dest_dir, anime.source_id)
 
         self.tabs.setCurrentIndex(self._downloads_tab_index)
         self._update_empty_queue()
 
-    def _enqueue_download(self, anime_title: str, episode: Episode, dest_dir: Path) -> None:
+    def _enqueue_download(
+        self,
+        anime_title: str,
+        episode: Episode,
+        dest_dir: Path,
+        source_id: str = "",
+    ) -> None:
         self._task_counter += 1
         task_id = self._task_counter
         row = DownloadRow(task_id, f"{anime_title}  ·  {episode.number_label}")
@@ -1766,7 +1974,15 @@ class MainWindow(QMainWindow):
         self.queue_layout.insertWidget(self.queue_layout.count() - 1, row)
         self._rows[task_id] = row
 
-        task = DownloadTask(self.client, task_id, anime_title, episode, dest_dir)
+        task = DownloadTask(
+            self.client,
+            self.sources,
+            task_id,
+            anime_title,
+            episode,
+            dest_dir,
+            source_id=source_id,
+        )
         task.signals.progress.connect(self._on_task_progress)
         task.signals.status.connect(self._on_task_status)
         task.signals.finished.connect(self._on_task_finished)

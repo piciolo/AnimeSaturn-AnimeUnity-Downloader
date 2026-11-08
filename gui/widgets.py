@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor, QCursor, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -93,6 +93,39 @@ class EpisodeList(QListWidget):
         self.unsetCursor()
         super().leaveEvent(event)
 
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        """Scorrendo, la riga sotto il puntatore cambia senza che il puntatore si muova."""
+        super().scrollContentsBy(dx, dy)
+        self._refresh_hover()
+
+    def _refresh_hover(self) -> None:
+        """Ricalcola quale play sta sotto il puntatore, senza eventi di movimento.
+
+        ``_hovered`` e' un **indice di riga**, e sotto un puntatore fermo lo
+        scorrimento cambia la riga che gli sta sotto senza produrre un solo evento di
+        movimento: una rotella, una trascinata della barra, le frecce. Il ▶ restava
+        illuminato e ingrandito su una riga mentre il clic -- che la riga la ricalcola
+        -- ne riproduceva un'altra. Un comando che indica un episodio e ne esegue un
+        altro e' peggio di un comando che non si vede.
+
+        La barra di scorrimento e' un figlio della lista, non del suo viewport: passandoci
+        sopra non arriva alcun ``leaveEvent``, ed e' un altro modo di restare illuminati
+        a torto. Qui si ricalcola comunque, e un punto fuori dal viewport non trova
+        righe.
+        """
+        if self.underMouse():
+            riga = self._play_row_at(self.viewport().mapFromGlobal(QCursor.pos()))
+        else:
+            riga = -1
+        if riga == self._hovered:
+            return
+        self._hovered = riga
+        self.viewport().update()
+        if riga >= 0:
+            self.setCursor(Qt.PointingHandCursor)
+        else:
+            self.unsetCursor()
+
     def mousePressEvent(self, event) -> None:
         row = self._play_row_at(event.position().toPoint())
         if row >= 0 and event.button() == Qt.LeftButton:
@@ -116,6 +149,32 @@ class EpisodeList(QListWidget):
             self._pressed = -1
             return
         super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        """Invio guarda l'episodio della riga corrente.
+
+        Il pulsante «Anteprima» era l'unico modo di guardare un episodio senza mouse, e
+        ritirarlo in favore di un ▶ disegnato ha lasciato questa lista raggiungibile
+        dalla tastiera e inservibile: le frecce muovono la riga corrente, lo spazio ne
+        muove la spunta, e non restava niente che riproducesse.
+
+        Si gestisce il tasto invece di collegare il segnale ``activated`` di Qt, che
+        pure arriva: su Windows quel segnale lo emette anche il **doppio clic**, che su
+        questa lista e' gia' la vecchia scorciatoia per guardare, e si aprirebbero due
+        finestre sullo stesso episodio -- lo stesso difetto che
+        ``mouseDoubleClickEvent`` qui sotto esiste per evitare.
+
+        Che la riga corrente si muova anche senza ``ItemIsSelectable`` e' stato
+        misurato, non dedotto. E si guarda la riga su cui si e', non la prima: era
+        proprio l'errore del vecchio pulsante.
+        """
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            item = self.currentItem()
+            episode = item.data(Qt.UserRole) if item is not None else None
+            if episode is not None:
+                self.play_requested.emit(episode)
+                return
+        super().keyPressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
         """Due clic rapidi sul play aprono un player, non due.
@@ -234,6 +293,52 @@ class MultiSelectDropdown(QPushButton):
             check.blockSignals(True)
             check.setChecked(False)
             check.blockSignals(False)
+        self._sync_text()
+
+    def restrict(self, consentiti: set[str] | None, motivo: str = "") -> list[str]:
+        """Spegne le voci che il portale attivo non sa esprimere.
+
+        ``consentiti`` a ``None`` vuol dire che l'intera dimensione qui non esiste, e il
+        comando si spegne tutto; un insieme spegne le voci che non vi compaiono. Le voci
+        spente portano ``motivo`` come suggerimento: una voce grigia senza spiegazione e'
+        un pezzo di app che sembra rotto, e non si capisce che tornerebbe scegliendo
+        l'altro portale.
+
+        Le voci spente vengono anche **deselezionate**, e i loro valori restituiti. Non
+        basta spegnere il comando: il vincolo vive nello stato della ricerca, e
+        resterebbe ad agire da invisibile. Un filtro che morde senza piu' un comando che
+        lo mostri e' peggio di un filtro che non c'e'.
+
+        Si toglie valore per valore, non la dimensione intera: con Azione e Magia
+        scelti, buttare via il genere **allargherebbe** la ricerca invece di
+        restringerla, ed e' il contrario di quel che hai chiesto.
+        """
+        tolti: list[str] = []
+        for valore, check in self._checks.items():
+            buono = consentiti is not None and valore in consentiti
+            if not buono and check.isChecked():
+                check.blockSignals(True)
+                check.setChecked(False)
+                check.blockSignals(False)
+                tolti.append(valore)
+            check.setEnabled(buono)
+            check.setToolTip("" if buono else motivo)
+        spenta = not any(c.isEnabled() for c in self._checks.values())
+        self.setEnabled(not spenta)
+        self.setToolTip(motivo if spenta else "")
+        if spenta:
+            self.setText(f"{self._placeholder}:  non disponibile")
+        else:
+            self._sync_text()
+        return tolti
+
+    def unrestrict(self) -> None:
+        """Riaccende tutte le voci: il portale attivo le sa esprimere tutte."""
+        for check in self._checks.values():
+            check.setEnabled(True)
+            check.setToolTip("")
+        self.setEnabled(True)
+        self.setToolTip("")
         self._sync_text()
 
 POSTER_W = 176

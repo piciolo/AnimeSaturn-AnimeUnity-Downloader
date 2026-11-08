@@ -15,11 +15,16 @@ from PySide6.QtCore import QObject, QRunnable, Signal
 from .models import Anime, Episode
 from .net import AnimeSaturnClient, DownloadCancelled, build_filename
 from .portal_domains import resolve_animeunity_domain
+from .sources.registry import SourcesUnavailable
 
 
 class SearchSignals(QObject):
     results = Signal(object, list)  # query_token, list[Anime]
     error = Signal(object, str)
+    # Nessun portale attivo ha risposto: token, messaggio, identificativi dei portali
+    # che hanno taciuto. Distinto da ``error`` perche' chi riceve deve poter curare il
+    # dominio di quei portali, e non lo puo' fare da una stringa.
+    unreachable = Signal(object, str, list)
 
 
 class SearchWorker(QRunnable):
@@ -61,6 +66,13 @@ class SearchWorker(QRunnable):
             )
             animes = [Anime.from_record(record) for record in records]
             self.signals.results.emit(self.token, animes)
+        except SourcesUnavailable as exc:
+            # Fuori dal ramo generico: «non ho potuto chiedere» va raccontato in modo
+            # diverso da «la richiesta e' andata male», e porta con se' a chi chiedere
+            # di nuovo dopo aver cercato il dominio nuovo.
+            self.signals.unreachable.emit(
+                self.token, str(exc), list(exc.errors.keys())
+            )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.signals.error.emit(self.token, str(exc))
 
@@ -243,17 +255,33 @@ class DownloadTask(QRunnable):
     def __init__(
         self,
         client: AnimeSaturnClient,
+        sources,
         task_id: int,
         anime_title: str,
         episode: Episode,
         dest_dir: Path,
+        *,
+        source_id: str = "",
     ) -> None:
+        """Due oggetti e non uno, perche' le due meta' del lavoro non sono uguali.
+
+        ``sources`` e' il registro dei portali e serve a **risolvere** l'indirizzo:
+        quello dipende da dove vive l'episodio. ``client`` serve a **scaricare i
+        byte**, e quello non dipende da niente -- ``download_file`` manda solo uno
+        User-Agent e un eventuale ``Range``, nessun riferimento al dominio -- quindi
+        resta condiviso come e' sempre stato.
+
+        Finche' qui arrivava il solo client di AnimeSaturn, un episodio di AnimeUnity
+        veniva composto col dominio sbagliato e il download non poteva che fallire.
+        """
         super().__init__()
         self.client = client
+        self.sources = sources
         self.task_id = task_id
         self.anime_title = anime_title
         self.episode = episode
         self.dest_dir = dest_dir
+        self.source_id = source_id
         self.signals = DownloadSignals()
         self._cancel = threading.Event()
         self._response = None
@@ -301,7 +329,19 @@ class DownloadTask(QRunnable):
             return
         try:
             self.signals.status.emit(self.task_id, "Risoluzione link…")
-            download_url = self.client.resolve_download_url(self.episode.watch_path)
+            # Al portale da cui viene l'episodio, non al primo che capita: l'indirizzo
+            # di una puntata di AnimeUnity e' un numero, e composto col dominio di
+            # AnimeSaturn non sbaglia a volte, sbaglia sempre. Si usa lo stesso ripiego
+            # della riproduzione -- se il suo portale non ce la fa, l'episodio si cerca
+            # sugli altri per titolo -- cosi' le due cose non si contraddicono piu':
+            # prima lo stesso episodio si riproduceva e non si scaricava, e sembrava un
+            # guasto a caso.
+            download_url, _used = self.sources.resolve_with_fallback(
+                self.episode.watch_path,
+                self.source_id,
+                self.anime_title,
+                self.episode.number,
+            )
 
             filename = build_filename(self.anime_title, self.episode, download_url)
             dest_path = self.dest_dir / filename

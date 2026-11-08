@@ -53,6 +53,23 @@ class AnimeSource(ABC):
         """Browsable genres. Optional: a portal without a genre page returns nothing."""
         return []
 
+    def expressible_filters(self) -> dict[str, set[str] | None]:
+        """Quali filtri questo portale sa esprimere, dove non li sa esprimere tutti.
+
+        Una chiave **assente** vuol dire «nessun limite»: e' il caso normale, ed e' il
+        caso del portale da cui il pannello dei filtri ha preso il suo vocabolario. Una
+        chiave che vale ``None`` e' una dimensione che qui non esiste affatto. Una chiave
+        che vale un insieme elenca i soli valori traducibili.
+
+        Serve all'interfaccia **prima** della ricerca. Un portale che non puo' tradurre
+        un filtro torna una lista vuota di proposito -- mostrare risultati non filtrati
+        sarebbe peggio -- ma quel vuoto arriva identico a «nessuna corrispondenza», e si
+        legge come la risposta a una domanda che non e' stata posta. Dichiarandolo qui,
+        il comando si spegne prima che tu possa usarlo: un avviso spiega l'errore, un
+        comando spento non te lo fa fare.
+        """
+        return {}
+
     def close(self) -> None:
         """Release network resources. Optional."""
 

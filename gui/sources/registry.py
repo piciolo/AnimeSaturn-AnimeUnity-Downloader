@@ -24,6 +24,27 @@ from .animeunity import AnimeUnitySource
 from .base import AnimeSource
 
 
+class SourcesUnavailable(Exception):
+    """Nessun portale attivo ha risposto.
+
+    Non e' la stessa cosa di «nessun risultato»: la' la domanda e' stata posta e la
+    risposta era vuota, qui non si e' potuto nemmeno chiedere. Tenerli distinti e'
+    cio' che permette all'interfaccia di parlare di connessione invece di scrivere
+    «Nessun risultato», e alla cura del dominio di partire -- finche' questo caso
+    tornava una lista vuota, quella cura non scattava mai.
+
+    Gemella di ``SourcesUnavailableException`` dell'app Android.
+    """
+
+    def __init__(self, errors: dict[str, str]) -> None:
+        #: Un messaggio per portale, con il suo identificativo.
+        self.errors = dict(errors)
+        super().__init__(
+            "Nessun portale raggiungibile.\n"
+            + "\n".join(f"{k}: {v}" for k, v in list(self.errors.items())[:3])
+        )
+
+
 class SourceRegistry:
     """The portals in use, in priority order."""
 
@@ -64,6 +85,61 @@ class SourceRegistry:
     @property
     def sources(self) -> list[AnimeSource]:
         return list(self._sources)
+
+    def known_portal(self, portal: str | None) -> str | None:
+        """``portal`` se questa versione lo conosce, altrimenti ``None``.
+
+        Serve a far concordare le due meta' dell'app su un identificativo salvato che
+        non corrisponde a nessun portale: una preferenza scritta da una versione che
+        ne offriva un altro, un file delle impostazioni toccato a mano, un portale
+        ritirato. ``_browse`` qui sotto ripiega su **tutti** i portali; il filtro degli
+        elenchi (``portal_filter``) non trova niente e li **svuota**. Il risultato era
+        un catalogo che funziona accanto a preferiti e cronologia vuoti, con
+        l'intestazione che scrive «Tutti i portali»: all'utente si legge come dati
+        perduti, che e' la lettura peggiore possibile per un filtro.
+
+        Si normalizza qui, al confine, e non dentro il filtro: quella e' una funzione
+        pura, il suo comportamento su un identificativo ignoto e' definito e fissato
+        dai vettori condivisi con l'app Android. Il difetto non era la regola, era che
+        nessuno validava cio' che le veniva passato.
+
+        Fra le due direzioni possibili si prende la sicura: mostrare tutto. Nascondere
+        tutto non e' mai la risposta giusta a «non so cosa sia questo».
+        """
+        if portal is None:
+            return None
+        return portal if any(s.id == portal for s in self._sources) else None
+
+    def expressible_filters(self) -> dict[str, set[str] | None]:
+        """I filtri esprimibili da ALMENO uno dei portali attivi.
+
+        Stessa regola degli avvisi: se uno sa rispondere la domanda e' ponibile, e un
+        elenco vuoto vuol dire davvero «nessun risultato». Quindi una dimensione resta
+        limitata solo se la limitano **tutti**, e i valori buoni sono l'**unione** dei
+        loro. Con tutti i portali attivi non si limita quasi niente, ed e' giusto:
+        scegliendone uno solo, il suo silenzio diventa visibile -- ed e' esattamente la
+        situazione in cui questo serve.
+        """
+        attivi = self._browse
+        if not attivi:
+            return {}
+        comuni: dict[str, set[str] | None] = {
+            chiave: (None if valori is None else set(valori))
+            for chiave, valori in attivi[0].expressible_filters().items()
+        }
+        for source in attivi[1:]:
+            suoi = source.expressible_filters()
+            for chiave in list(comuni):
+                if chiave not in suoi:
+                    # Questo portale non limita la dimensione: non e' limitata.
+                    del comuni[chiave]
+                    continue
+                miei, altri = comuni[chiave], suoi[chiave]
+                unione = (set() if miei is None else set(miei)) | (
+                    set() if altri is None else set(altri)
+                )
+                comuni[chiave] = unione or None
+        return comuni
 
     @property
     def _browse(self) -> list[AnimeSource]:
@@ -118,19 +194,40 @@ class SourceRegistry:
         page: int = 1,
         dub: str = "",
         filters: dict | None = None,
+        on_source_error=None,
     ) -> list[dict]:
         """Search every portal and return the combined records.
 
         A portal that raises is skipped rather than allowed to empty the whole result.
+
+        ``on_source_error(source_id, message)`` viene chiamata per ogni portale che non
+        ha risposto, **anche quando gli altri hanno funzionato**: serve a chi chiama per
+        curare in sottofondo un dominio cambiato. Senza questa notizia, un portale che
+        aveva traslocato restava assente in silenzio finche' non cadevano anche gli
+        altri.
+
+        Se hanno ceduto **tutti** quelli attivi si solleva :class:`SourcesUnavailable`
+        invece di restituire una lista vuota: quel vuoto verrebbe mostrato come «nessun
+        risultato», cioe' come risposta a una domanda che non e' stata posta. Il
+        confronto e' contro i portali ATTIVI, non contro tutti: scegliendone uno solo,
+        il suo fallimento non raggiungerebbe mai il totale, e si tornerebbe a mentire
+        proprio nel caso per cui questo controllo esiste.
         """
+        attivi = self._browse
         per_source: list[list[dict]] = []
-        for source in self._browse:
+        errors: dict[str, str] = {}
+        for source in attivi:
             try:
                 per_source.append(
                     source.search(title, sort=sort, page=page, dub=dub, filters=filters)
                 )
-            except Exception:  # noqa: BLE001 - one broken portal must not sink the rest
+            except Exception as exc:  # noqa: BLE001 - one broken portal must not sink the rest
                 per_source.append([])
+                errors[source.id] = f"{type(exc).__name__}: {exc}"
+                if on_source_error is not None:
+                    on_source_error(source.id, str(exc))
+        if attivi and len(errors) == len(attivi):
+            raise SourcesUnavailable(errors)
         return _dedupe(_interleave(per_source))
 
     def suggest(self, query: str) -> list[dict]:

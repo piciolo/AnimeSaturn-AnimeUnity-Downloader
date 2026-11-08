@@ -319,7 +319,9 @@ class TailProbe(QObject):
 class PlayerWindow(QDialog):
     """A video window that streams an episode or plays a downloaded file."""
 
-    download_requested = Signal(str, object)     # anime_title, Episode
+    # Il portale viaggia col segnale: senza, chi accoda non sa a chi chiedere
+    # l'indirizzo e lo chiedeva sempre ad AnimeSaturn.
+    download_requested = Signal(str, object, str)  # anime_title, Episode, source_id
     progress = Signal(int, int, bool)            # position_ms, duration_ms, finished
     ended = Signal()                             # reached the end / go to the next episode
     previous_requested = Signal()                # go to the previous episode
@@ -900,6 +902,11 @@ class PlayerWindow(QDialog):
         detector = IntroDetector(
             self.client, self.slug, current, self._media_url,
             self._ref_candidates(current), self,
+            # Il portale e il titolo: senza, il riferimento veniva chiesto sempre ad
+            # AnimeSaturn, e su AnimeUnity il rilevamento rinunciava in silenzio.
+            cur_watch=self.episode.watch_path,
+            source_id=getattr(self.episode, "source_id", "") or self.source_id,
+            title=self.anime_title,
         )
         self._intro_det = detector
         token = self._token
@@ -1124,7 +1131,11 @@ class PlayerWindow(QDialog):
             QDesktopServices.openUrl(QUrl(self._media_url))
 
     def _request_download(self) -> None:
-        self.download_requested.emit(self.anime_title, self.episode)
+        self.download_requested.emit(
+            self.anime_title,
+            self.episode,
+            getattr(self.episode, "source_id", "") or self.source_id,
+        )
         self.download_button.setText("✓  In coda")
         self.download_button.setEnabled(False)
 

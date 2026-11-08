@@ -38,6 +38,7 @@ from PySide6.QtCore import (
 from PySide6.QtMultimedia import QAudioDecoder, QAudioFormat
 
 from .mp4index import Mp4IndexError, fetch_episode_audio
+from .history import sibling_watch_path
 from .net import AnimeSaturnClient, sanitize_name
 from .workers import ResolveWorker
 
@@ -260,12 +261,41 @@ class IntroDetector(QObject):
 
     detected = Signal(int, int)  # op_start_ms, op_end_ms (0, 0 = none)
 
-    def __init__(self, client: AnimeSaturnClient, slug, cur_ep, cur_url, ref_eps, parent=None) -> None:
+    def __init__(
+        self,
+        client: AnimeSaturnClient,
+        slug,
+        cur_ep,
+        cur_url,
+        ref_eps,
+        parent=None,
+        *,
+        cur_watch: str = "",
+        source_id: str = "",
+        title: str = "",
+    ) -> None:
+        """``cur_watch``, ``source_id`` e ``title`` sono cio' che serve per chiedere
+        l'episodio di riferimento al portale giusto.
+
+        Senza, il riferimento veniva costruito come ``/anime/<slug>/ep-<n>`` e chiesto
+        al primo portale: la forma e l'interlocutore di AnimeSaturn. Su AnimeUnity, che
+        indirizza un episodio con un numero opaco, quella richiesta non poteva che
+        fallire -- e poiche' un riferimento che non si risolve fa solo passare al
+        candidato dopo, i candidati finivano e il rilevamento rinunciava **in
+        silenzio**. Il salta-sigla non funzionava su quel portale e niente lo diceva.
+
+        Il gemello Android non ha mai avuto questo difetto: la' si itera sugli episodi
+        veri e si usa il loro indirizzo (`lib/data/intro/intro_detector.dart`). Questa
+        e' la stessa cosa, con i mezzi che ha il desktop.
+        """
         super().__init__(parent)
         self.client = client
         self.slug = slug
         self.cur_ep = str(cur_ep)
         self.cur_url = cur_url
+        self.cur_watch = cur_watch or ""
+        self.source_id = source_id or ""
+        self.title = title or ""
         # Several reference candidates, tried in turn: measured on a real series, only
         # 1 of 6 episode pairs shared an opening - premieres and specials routinely have
         # none, so a single fixed reference (episode 1) can fail for a whole series.
@@ -342,8 +372,19 @@ class IntroDetector(QObject):
             self._finish(0, 0, None)
             return
         self.ref_ep = self._ref_queue.pop(0)
+        # Derivato dall'indirizzo dell'episodio in corso quando la forma lo permette,
+        # altrimenti vuoto -- e vuoto non e' una rinuncia: con il portale, il titolo e
+        # il numero, il registro trova l'episodio cercando per titolo, la stessa strada
+        # che la riproduzione usa quando un portale non ce la fa. Costa una ricerca in
+        # piu' per candidato, accanto a decine di secondi di audio da scaricare.
+        watch = sibling_watch_path(self.cur_watch, self.ref_ep)
         worker = ResolveWorker(
-            self.client, object(), f"/anime/{self.slug}/ep-{self.ref_ep}"
+            self.client,
+            object(),
+            watch,
+            source_id=self.source_id,
+            title=self.title,
+            episode_number=self.ref_ep,
         )
         # Bound methods (not lambdas) so the slot runs queued on THIS (main) thread:
         # QAudioDecoder must be created/used on the thread with the event loop.
