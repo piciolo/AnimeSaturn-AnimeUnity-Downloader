@@ -19,7 +19,11 @@ from .sources.registry import SourcesUnavailable
 
 
 class SearchSignals(QObject):
-    results = Signal(object, list)  # query_token, list[Anime]
+    # token, schede, e se un portale ha consegnato una pagina piena. Il terzo non si
+    # ricava dal secondo: la fusione dei duplicati accorcia l'elenco di proposito, e
+    # quel calo veniva letto come «non c'e' altro» -- il catalogo oltre la prima
+    # pagina diventava irraggiungibile.
+    results = Signal(object, list, bool)
     error = Signal(object, str)
     # Nessun portale attivo ha risposto: token, messaggio, identificativi dei portali
     # che hanno taciuto. Distinto da ``error`` perche' chi riceve deve poter curare il
@@ -30,8 +34,8 @@ class SearchSignals(QObject):
 class SearchWorker(QRunnable):
     """Run a search/browse query off the UI thread.
 
-    ``client`` may be a single portal or the source registry: both expose ``search``,
-    and the registry simply asks every portal and combines the answers.
+    ``client`` e' il registro delle sorgenti: interroga ogni portale e combina le
+    risposte. Prende anche ``meta``, da cui si legge se la pagina era piena.
     """
 
     def __init__(
@@ -57,15 +61,19 @@ class SearchWorker(QRunnable):
 
     def run(self) -> None:
         try:
+            meta: dict = {}
             records = self.client.search(
                 self.title,
                 sort=self.sort,
                 page=self.page,
                 dub=self.dub,
                 filters=self.filters,
+                meta=meta,
             )
             animes = [Anime.from_record(record) for record in records]
-            self.signals.results.emit(self.token, animes)
+            self.signals.results.emit(
+                self.token, animes, bool(meta.get("page_full"))
+            )
         except SourcesUnavailable as exc:
             # Fuori dal ramo generico: «non ho potuto chiedere» va raccontato in modo
             # diverso da «la richiesta e' andata male», e porta con se' a chi chiedere

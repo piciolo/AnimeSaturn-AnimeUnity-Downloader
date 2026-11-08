@@ -1543,7 +1543,9 @@ class MainWindow(QMainWindow):
         worker.signals.unreachable.connect(self._on_search_unreachable)
         self.io_pool.start(worker)
 
-    def _on_search_results(self, token: object, animes: list) -> None:
+    def _on_search_results(
+        self, token: object, animes: list, page_full: bool = False
+    ) -> None:
         if token != self._search_token:
             return  # stale response from a superseded query
         if not self._append_next and not animes:
@@ -1560,28 +1562,29 @@ class MainWindow(QMainWindow):
         self._append_next = False
         self.status_label.setText(f"{self._result_count} risultati")
 
-        self.load_more_button.setVisible(self._has_more(len(animes)))
+        self.load_more_button.setVisible(self._has_more(len(animes), page_full))
         self.load_more_button.setEnabled(True)
         self.load_more_button.setText("Carica altri risultati")
 
-    def _has_more(self, quante: int) -> bool:
-        """Se offrire «Carica altri risultati», viste quante schede sono arrivate.
+    def _has_more(self, quante: int, page_full: bool) -> bool:
+        """Se offrire «Carica altri risultati».
 
-        Una pagina piena vuol dire che ce n'e' un'altra: e' la regola di sempre, e per
-        una ricerca normale e' quella giusta — una pagina corta e' la fine.
+        ``page_full`` arriva da chi lo sa: il registro, che lo misura **prima** di fondere
+        i duplicati. Contare le schede rimaste non funziona, e provarci e' costato quasi
+        tutto il catalogo di AnimeSaturn — la fusione accorcia la pagina di proposito, un
+        anime doppiato e il suo gemello sottotitolato sono lo stesso anime e ne resta una
+        scheda sola, quindi trenta schede del sito diventavano ventisei e il confronto
+        falliva. Su sei viste misurate, il pulsante compariva in una.
 
-        Ma quando c'è un filtro che l'app applica **sui risultati** — il Sub/Dub sugli
+        Resta il caso dei filtri che l'app applica **sui risultati**: il Sub/Dub sugli
         endpoint di sfoglio, che non lo accettano nella richiesta, o una scelta multipla
-        di generi — la pagina arriva accorciata pur non essendo l'ultima. Con la regola
-        di sempre il pulsante spariva col catalogo ancora pieno: trenta schede diventano
-        otto chiedendo «solo doppiati», e l'utente leggeva «questi sono tutti» davanti a
-        un quindicesimo del vero. Dati che sembrano assenti, di nuovo.
+        di generi. Là la pagina arriva corta dal portale stesso, quindi ``page_full`` è
+        falso pur non essendo la fine, e basta che sia arrivato qualcosa.
 
-        Con un filtro attivo basta percio' che sia arrivato qualcosa. Il prezzo è un clic
-        a vuoto sull'ultima pagina, dopo il quale il pulsante si nasconde da sé:
-        nascondere un catalogo è un danno, sprecare un clic no.
+        Il prezzo è un clic a vuoto sull'ultima pagina vera, dopo il quale il pulsante si
+        nasconde da sé: nascondere un catalogo è un danno, sprecare un clic no.
         """
-        if quante >= PAGE_SIZE:
+        if page_full:
             return True
         query = getattr(self, "_query", None) or {}
         potato = bool(query.get("dub")) or bool(query.get("filters"))

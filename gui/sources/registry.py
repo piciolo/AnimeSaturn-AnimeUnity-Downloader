@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 
 from ..canonical import canonical_key
-from ..net import AnimeSaturnClient
+from ..net import PAGE_SIZE, AnimeSaturnClient
 from .animesaturn import AnimeSaturnSource
 from .animeunity import AnimeUnitySource
 from .base import AnimeSource
@@ -195,6 +195,7 @@ class SourceRegistry:
         dub: str = "",
         filters: dict | None = None,
         on_source_error=None,
+        meta: dict | None = None,
     ) -> list[dict]:
         """Search every portal and return the combined records.
 
@@ -205,6 +206,17 @@ class SourceRegistry:
         curare in sottofondo un dominio cambiato. Senza questa notizia, un portale che
         aveva traslocato restava assente in silenzio finche' non cadevano anche gli
         altri.
+
+        ``meta``, se passato, riceve ``page_full``: se **almeno un** portale attivo ha
+        consegnato una pagina piena. Chi chiama non puo' ricavarlo dalla lista che torna,
+        e provarci e' costato quasi tutto il catalogo di AnimeSaturn: la fusione dei
+        duplicati accorcia la pagina di proposito -- un anime doppiato e il suo gemello
+        sottotitolato sono lo stesso anime, e ne resta una scheda sola -- quindi 30 schede
+        del sito diventavano 26, il confronto con la pagina del sito falliva e
+        l'interfaccia concludeva «finito». Oltre la prima pagina non si andava.
+
+        Si misura **prima** di fondere, perche' e' allora che il numero significa «quante
+        me ne ha date il portale» invece di «quante ne restano da mostrare».
 
         Se hanno ceduto **tutti** quelli attivi si solleva :class:`SourcesUnavailable`
         invece di restituire una lista vuota: quel vuoto verrebbe mostrato come «nessun
@@ -228,6 +240,8 @@ class SourceRegistry:
                     on_source_error(source.id, str(exc))
         if attivi and len(errors) == len(attivi):
             raise SourcesUnavailable(errors)
+        if meta is not None:
+            meta["page_full"] = any(len(l) >= PAGE_SIZE for l in per_source)
         return _dedupe(_interleave(per_source))
 
     def suggest(self, query: str) -> list[dict]:
