@@ -170,3 +170,9 @@ URLs.txt
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# L eseguibile prodotto da PyInstaller: 80 MB di artefatto, non di sorgente.
+# Va allegato a una release, non messo nella storia del repo: GitHub avvisa sopra i
+# 50 MB e rifiuta sopra i 100, e un binario entrato nella storia non si toglie piu
+# senza riscrivere la storia stessa.
+*.exe
