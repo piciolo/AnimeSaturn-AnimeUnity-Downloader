@@ -60,6 +60,24 @@ def portal_label(portal: str | None) -> str:
     return "Tutti i portali"
 
 
+def app_title(portal: str | None) -> str:
+    """Come si chiama il programma, visto da chi sta guardando su ``portal``.
+
+    Scegliendo un portale, il programma *e'* quello di quel portale: e' cosi' che
+    l'utente lo percepisce, ed e' anche il nome con cui molti lo hanno trovato prima
+    che i due progetti venissero uniti. Con "AnimeUnity" scelto, leggere
+    "AnimeSaturn Downloader" sulla barra delle applicazioni era semplicemente falso.
+
+    Senza scelta -- nessun portale salvato, o un identificativo che non corrisponde a
+    nessuno -- valgono entrambi, perche' entrambi vengono interrogati.
+    """
+    for portal_id, _icon, name, _description in _PORTALS:
+        if portal_id == portal:
+            return f"{name} Downloader"
+    names = " · ".join(name for _id, _icon, name, _desc in _PORTALS)
+    return f"{names} Downloader"
+
+
 class PortalPicker(QDialog):
     """Chiede da quale portale guardare. Lascia la scelta in :attr:`portal`."""
 

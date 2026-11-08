@@ -37,7 +37,7 @@ from .favorites import FavoritesStore
 from .sources import SourceRegistry
 from .history import WatchHistory, format_progress
 from .models import Anime, Episode
-from .portal_picker import choose_portal, portal_label
+from .portal_picker import app_title, choose_portal, portal_label
 from .net import (
     DUB_OPTIONS,
     GENRE_OPTIONS,
@@ -157,9 +157,7 @@ class MainWindow(QMainWindow):
         self.cloud = CloudClient(CloudConfig())
         self._account_dialog = None
 
-        from . import __version__
-
-        self.setWindowTitle(f"AnimeSaturn Downloader v{__version__}")
+        self._refresh_app_title()
         self.resize(1180, 820)
         self.setMinimumSize(940, 640)
 
@@ -223,12 +221,33 @@ class MainWindow(QMainWindow):
         # Pull anything watched elsewhere shortly after launch, once the window is up.
         QTimer.singleShot(2500, self._auto_sync)
 
+    def _refresh_app_title(self) -> None:
+        """Mette il portale in uso nel titolo della finestra e nell'intestazione.
+
+        Cio' che NON cambia e' ``QApplication.applicationName()``. Preferiti e
+        cronologia vivono in ``QStandardPaths.AppDataLocation``, che su Windows
+        contiene quel nome: farlo dipendere dal portale spezzerebbe l'archivio in uno
+        per portale, e all'utente sembrerebbero dati persi. Qui si cambia solo quello
+        che si legge, mai dove si scrive.
+
+        Regge anche prima che l'interfaccia esista: il titolo della finestra si mette
+        appena la finestra c'e', l'etichetta solo quando e' stata costruita.
+        """
+        from . import __version__
+
+        titolo = app_title(self.portal)
+        self.setWindowTitle(f"{titolo} v{__version__}")
+        label = getattr(self, "title_label", None)
+        if label is not None:
+            label.setText(titolo)
+
     def _refresh_portal_button(self) -> None:
         self.portal_button.setText(f"🌐  {portal_label(self.portal)}")
         self.portal_button.setToolTip(
             "Catalogo, ricerca, preferiti e «continua» mostrano questo portale. "
             "Le voci dell'altro restano dove sono: cambiando portale tornano."
         )
+        self._refresh_app_title()
 
     def _change_portal(self) -> None:
         """Riapre la domanda e applica la scelta senza riavviare.
@@ -304,9 +323,9 @@ class MainWindow(QMainWindow):
         box.setSpacing(12)
 
         top = QHBoxLayout()
-        title = QLabel("AnimeSaturn Downloader")
-        title.setObjectName("Title")
-        top.addWidget(title)
+        self.title_label = QLabel(app_title(self.portal))
+        self.title_label.setObjectName("Title")
+        top.addWidget(self.title_label)
         from . import __version__
 
         version = QLabel(f"v{__version__}")
