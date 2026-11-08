@@ -22,6 +22,7 @@ from PySide6.QtCore import QStandardPaths
 
 from .canonical import canonical_key
 from .merge import (
+    _to_float,
     as_tombstone,
     as_watched,
     is_removed,
