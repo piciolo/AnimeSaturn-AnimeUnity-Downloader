@@ -215,6 +215,7 @@ def main() -> int:
     semina()
     print("cartella di prova: %s" % CARTELLA)
 
+    import gui.main_window as mw
     from gui.main_window import MainWindow
 
     # La rete non serve a questa prova, e la renderebbe lenta e incerta.
@@ -320,6 +321,60 @@ def main() -> int:
         visibile(finestra.favorites_outside),
         "avviso = %r" % finestra.favorites_outside.text()[:60],
     )
+
+    print()
+    print("la griglia quando il portale cambia mentre guardi altro:")
+    # Si intercetta ``_spawn_search`` e non ``_start_query``: così la logica vera gira
+    # tutta — compreso l'azzeramento della bandiera — e si ferma solo un passo prima
+    # della rete. Fermare ``_start_query`` avrebbe provato lo spegnimento, non il codice.
+    cercate: list[dict] = []
+    finestra._spawn_search = lambda: cercate.append(dict(finestra._query))
+    finestra.portal = "animesaturn"
+    finestra.sources.only_portal = "animesaturn"
+    finestra._catalog_stale = False
+
+    # Da un'altra scheda: non si strappa niente, ma si prende nota.
+    mw.choose_portal = lambda *a, **k: "animeunity"
+    finestra.tabs.setCurrentIndex(finestra._library_tab_index)
+    cercate.clear()
+    finestra._change_portal()
+    prova("da un'altra scheda la ricerca non si rifà subito", not cercate,
+          "ricerche = %d" % len(cercate))
+    prova("ma la griglia resta segnata come vecchia", finestra._catalog_stale)
+
+    finestra._on_tab_changed(0)
+    prova("tornando al catalogo si rifà, una volta", len(cercate) == 1,
+          "ricerche = %d" % len(cercate))
+    prova("e non è più vecchia", not finestra._catalog_stale)
+    finestra._on_tab_changed(0)
+    prova("e non si rifà di nuovo senza motivo", len(cercate) == 1,
+          "ricerche = %d" % len(cercate))
+
+    # Dentro la scheda di un anime: nemmeno lì si strappa.
+    mw.choose_portal = lambda *a, **k: "animesaturn"
+    finestra.tabs.setCurrentIndex(0)
+    finestra.catalog_stack.setCurrentIndex(1)
+    cercate.clear()
+    finestra._change_portal()
+    prova("leggendo la scheda di un anime non si rifà", not cercate,
+          "ricerche = %d" % len(cercate))
+    prova("la griglia sotto si segna vecchia", finestra._catalog_stale)
+    finestra._go_back()
+    prova("uscendo dalla scheda la griglia si rifà", len(cercate) == 1,
+          "ricerche = %d" % len(cercate))
+    prova("e si torna davvero sulla griglia",
+          finestra.catalog_stack.currentIndex() == 0)
+
+    # Guardando la griglia: si rifà subito, come faceva già.
+    mw.choose_portal = lambda *a, **k: "animeunity"
+    finestra.tabs.setCurrentIndex(0)
+    finestra.catalog_stack.setCurrentIndex(0)
+    cercate.clear()
+    finestra._change_portal()
+    prova("guardando la griglia il cambio la rifà subito", len(cercate) == 1,
+          "ricerche = %d" % len(cercate))
+    prova("e non resta nulla di vecchio da rifare",
+          not finestra._catalog_stale)
 
     finestra.close()
     return 1 if guai else 0

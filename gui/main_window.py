@@ -180,6 +180,10 @@ class MainWindow(QMainWindow):
         # Query + task state
         self._search_token = 0
         self._append_next = False
+        # La griglia mostra i risultati di un portale che non e' piu' quello scelto,
+        # perche' il portale e' cambiato mentre si guardava altro. Si rifa' quando si
+        # torna a guardarla, non prima: vedi ``_refresh_catalog_if_stale``.
+        self._catalog_stale = False
         self._query: dict = {
             "title": "", "sort": "standard", "dub": "", "filters": {}, "page": 1,
         }
@@ -352,6 +356,10 @@ class MainWindow(QMainWindow):
                 dub=query["dub"],
                 filters=query["filters"],
             )
+        else:
+            # Non si rifa' ora, ma la griglia e' del portale di prima: si segna, e si
+            # rifara' quando si torna a guardarla.
+            self._catalog_stale = True
 
     def _outside_note(self, label: QLabel, count: int) -> None:
         """Dice quante voci sono sull'altro portale, o tace quando sono zero.
@@ -379,6 +387,9 @@ class MainWindow(QMainWindow):
         """Return from the anime detail view to the results grid."""
         if self.tabs.currentIndex() == 0 and self.catalog_stack.currentIndex() == 1:
             self.catalog_stack.setCurrentIndex(0)
+            # La scheda di un anime resta quella del portale da cui venne, e va bene:
+            # un episodio vive dove e' stato trovato. La griglia sotto, no.
+            self._refresh_catalog_if_stale()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         # Support the mouse "back" button (side button) as a back action.
@@ -1058,8 +1069,38 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.library_empty)
         return page
 
+    def _refresh_catalog_if_stale(self) -> None:
+        """Rifà la griglia se il portale è cambiato mentre non la si guardava.
+
+        Cambiare portale da un'altra scheda non rifà la ricerca subito, e per una buona
+        ragione: strappare da sotto la scheda di un anime che si sta leggendo, o una
+        griglia che non si sta nemmeno guardando, sarebbe un dispetto. Ma la griglia
+        resta quella del portale di prima mentre l'intestazione dice il portale nuovo —
+        due cose che si contraddicono, e tornando al catalogo si leggono come risultati
+        del portale sbagliato.
+
+        Peggio: **Carica altri risultati** avrebbe accodato la pagina del portale nuovo
+        sotto i risultati del vecchio, mescolandone due in una griglia sola, con una
+        numerazione delle pagine che non corrisponde a nessuno dei due.
+
+        Si rifà quindi al momento di tornare a guardarla — cambiando scheda o uscendo
+        dalla scheda di un anime. Nulla viene strappato, e non si vede mai la griglia di
+        un portale che non è quello scelto.
+        """
+        if not self._catalog_stale:
+            return
+        query = self._query
+        self._start_query(
+            title=query["title"],
+            sort=query["sort"],
+            dub=query["dub"],
+            filters=query["filters"],
+        )
+
     def _on_tab_changed(self, index: int) -> None:
-        if index == self._genres_tab_index:
+        if index == 0:  # Catalogo
+            self._refresh_catalog_if_stale()
+        elif index == self._genres_tab_index:
             self._refresh_genres()
         elif index == self._favorites_tab_index:
             self._refresh_favorites()
@@ -1510,6 +1551,8 @@ class MainWindow(QMainWindow):
 
     def _start_query(self, *, title: str, sort: str, dub: str, filters: dict) -> None:
         self.catalog_stack.setCurrentIndex(0)
+        # Qualunque ricerca riempie la griglia col portale attivo: da qui non e' vecchia.
+        self._catalog_stale = False
         self._search_token += 1
         self._append_next = False
         self._query = {
