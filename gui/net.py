@@ -270,9 +270,21 @@ class AnimeSaturnClient:
         client_side_dub = ""
 
         if not title and not filters and sort in BROWSE_ENDPOINTS:
-            url = f"{self.base_url}{BROWSE_ENDPOINTS[sort]}"
-            params: dict[str, object] = {"page": page}
-            client_side_dub = dub  # these endpoints ignore &dub
+            # Questi endpoint impaginano nel PERCORSO, non nella query: ``/ongoing/2``.
+            # Con ``?page=2`` il sito tornava a servire la prima pagina -- misurato, 30
+            # schede su 30 in comune, stesso ordine -- quindi «Carica altri risultati»
+            # ri-aggiungeva gli stessi trenta anime invece dei successivi, per sempre:
+            # il catalogo in corso sembrava fatto di trenta titoli invece dei
+            # cinquecento che ha, e chi insisteva otteneva solo doppioni.
+            #
+            # La prima pagina non porta il numero, e un numero oltre la fine risponde
+            # con zero schede: quello e' il segnale di esaurimento.
+            coda = "" if page <= 1 else f"/{page}"
+            url = f"{self.base_url}{BROWSE_ENDPOINTS[sort]}{coda}"
+            params: dict[str, object] = {}
+            # Il doppiaggio qui non viaggia nella richiesta: `dub=1`, `dub=0` e nessun
+            # `dub` danno risposte identiche (misurato), quindi si filtra sotto.
+            client_side_dub = dub
         else:
             url = f"{self.base_url}/filter"
             params = {"sort": sort or "standard", "page": page}

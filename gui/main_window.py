@@ -1560,10 +1560,32 @@ class MainWindow(QMainWindow):
         self._append_next = False
         self.status_label.setText(f"{self._result_count} risultati")
 
-        has_more = len(animes) >= PAGE_SIZE
-        self.load_more_button.setVisible(has_more)
+        self.load_more_button.setVisible(self._has_more(len(animes)))
         self.load_more_button.setEnabled(True)
         self.load_more_button.setText("Carica altri risultati")
+
+    def _has_more(self, quante: int) -> bool:
+        """Se offrire «Carica altri risultati», viste quante schede sono arrivate.
+
+        Una pagina piena vuol dire che ce n'e' un'altra: e' la regola di sempre, e per
+        una ricerca normale e' quella giusta — una pagina corta e' la fine.
+
+        Ma quando c'è un filtro che l'app applica **sui risultati** — il Sub/Dub sugli
+        endpoint di sfoglio, che non lo accettano nella richiesta, o una scelta multipla
+        di generi — la pagina arriva accorciata pur non essendo l'ultima. Con la regola
+        di sempre il pulsante spariva col catalogo ancora pieno: trenta schede diventano
+        otto chiedendo «solo doppiati», e l'utente leggeva «questi sono tutti» davanti a
+        un quindicesimo del vero. Dati che sembrano assenti, di nuovo.
+
+        Con un filtro attivo basta percio' che sia arrivato qualcosa. Il prezzo è un clic
+        a vuoto sull'ultima pagina, dopo il quale il pulsante si nasconde da sé:
+        nascondere un catalogo è un danno, sprecare un clic no.
+        """
+        if quante >= PAGE_SIZE:
+            return True
+        query = getattr(self, "_query", None) or {}
+        potato = bool(query.get("dub")) or bool(query.get("filters"))
+        return potato and quante > 0
 
     def _no_results_text(self) -> str:
         """«Nessun risultato», dicendo su quale portale si è cercato.
