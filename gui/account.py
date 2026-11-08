@@ -6,6 +6,7 @@ only the refresh token Firebase returns, which "Esci" deletes.
 
 from __future__ import annotations
 
+import html
 import time
 
 from PySide6.QtCore import Qt, Signal
@@ -36,10 +37,29 @@ from .cloud import DEFAULT_SENDER, CloudClient, CloudError
 #: al primo ritocco.
 _SPAM = (
     "Quasi sempre finisce nella POSTA INDESIDERATA, e il mittente è\n"
-    f"      {DEFAULT_SENDER}\n"
+    f"{DEFAULT_SENDER}\n"
     "Cercalo lì, apri il link, e segnala il messaggio come «non spam»: "
     "le prossime arriveranno nella posta in arrivo."
 )
+
+
+def _spam_html() -> str:
+    """``_SPAM`` in bianco e in grassetto, per la finestra.
+
+    Ricavato dalla stessa stringa dei messaggi semplici invece che riscritto: due
+    stesure delle stesse parole divergono al primo ritocco, e queste divergerebbero fra
+    l'avviso e la riga di stato — due posti che si vedono nello stesso minuto.
+
+    Si passa da ``html.escape`` perché il testo contiene virgolette e perché domani
+    potrebbe contenere una «&»: un carattere speciale non sfuggito, in una label a testo
+    ricco, non si vede male — sparisce.
+    """
+    righe = [html.escape(r) for r in _SPAM.split("\n")]
+    return (
+        '<span style="color:#ffffff; font-weight:700;">'
+        + "<br>".join(righe)
+        + "</span>"
+    )
 
 
 class AccountDialog(QDialog):
@@ -86,6 +106,9 @@ class AccountDialog(QDialog):
         self.verify_note = QLabel("")
         self.verify_note.setObjectName("Muted")
         self.verify_note.setWordWrap(True)
+        # A testo ricco per poter dare risalto al consiglio sullo spam: da qui in poi
+        # tutto cio' che finisce in questa label va sfuggito con ``html.escape``.
+        self.verify_note.setTextFormat(Qt.RichText)
         self.verify_note.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.verify_note.setVisible(False)
         layout.addWidget(self.verify_note)
@@ -177,15 +200,17 @@ class AccountDialog(QDialog):
             problema = self.client.verification_error
             if problema:
                 self.verify_note.setText(
-                    f"⚠  Non ho potuto mandare l'email di verifica: {problema}\n"
+                    "⚠  Non ho potuto mandare l'email di verifica: "
+                    f"{html.escape(problema)}<br>"
                     "Riprova fra qualche minuto con «Rimanda email di verifica». "
                     "Finché l'indirizzo non è confermato non potrai reimpostare la "
                     "password se la dimentichi."
                 )
             else:
                 self.verify_note.setText(
-                    f"⚠  Email di verifica inviata a {config.email} — aprila e "
-                    f"torna qui.\n\n{_SPAM}\n\n"
+                    "⚠  Email di verifica inviata a "
+                    f"{html.escape(config.email)} — aprila e torna qui."
+                    f"<br><br>{_spam_html()}<br><br>"
                     "La sincronizzazione funziona già. Ma finché non confermi non "
                     "potrai reimpostare la password se la dimentichi: il link "
                     "arriverebbe a un indirizzo che forse non è il tuo."
