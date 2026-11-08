@@ -182,7 +182,7 @@ class WatchHistory:
                     "episode_number": next_number,
                     "position_ms": 0,
                     "duration_ms": 0,
-                    "watch_path": _sibling_watch_path(watch_path, next_number),
+                    "watch_path": sibling_watch_path(watch_path, next_number),
                     "file_path": "",
                     "completed": False,
                 }
@@ -230,7 +230,10 @@ class WatchHistory:
         """
         entries = sorted(
             entries_for_portal(self._live(), portal),
-            key=lambda e: e.get("updated_at", 0),
+            # Convertito: un orario scritto come testo faceva cadere l'ordinamento con
+            # un TypeError, cioe' l'intera scheda, e dava un ordine diverso da quello
+            # dell'app Android, che converte da sempre.
+            key=lambda e: _to_float(e.get("updated_at")),
             reverse=True,
         )
         return entries[:limit]
@@ -316,8 +319,19 @@ def _advance(episode_number: str, total: int) -> str:
     return ""
 
 
-def _sibling_watch_path(watch_path: str, number: str) -> str:
-    """Rewrite ``/anime/<slug>/ep-<n>`` to point at episode ``number``."""
+def sibling_watch_path(watch_path: str, number: str) -> str:
+    """Rewrite ``/anime/<slug>/ep-<n>`` to point at episode ``number``.
+
+    Returns ``""`` when the shape does not allow it, and that empty string is the
+    right answer rather than a failure: AnimeUnity addresses an episode by an opaque
+    numeric id, so the next episode's handle simply cannot be derived from this
+    one's. Guessing produces a string no portal can read -- and if it is written to
+    the history row it replaces the handle that worked. Empty costs a title search;
+    a fabricated path costs the row.
+
+    Public because the window needs the same rule: it used to carry its own copy,
+    which is where the fabrication came from.
+    """
     if "/ep-" in watch_path:
         return watch_path.rsplit("/ep-", 1)[0] + f"/ep-{number}"
     return ""

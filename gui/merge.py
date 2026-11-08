@@ -146,6 +146,28 @@ def as_watched(record: dict, now: float) -> float:
     return max(now, _removed_stamp(record) + 1.0)
 
 
+def as_toggled(record: dict, now: float) -> float:
+    """The ``toggled_at`` to stamp on a favourite the user has just touched.
+
+    Terza sorella di ``as_tombstone`` e ``as_watched``, e per la stessa ragione:
+    un'azione dell'utente deve vedersi subito, qualunque cosa dicano gli orologi.
+
+    Un preferito porta **un orario solo** e un interruttore, e a decidere la
+    sincronizzazione e' l'orario piu' recente (vedi ``merge_favourite``). Se la riga
+    porta gia' un orario nel futuro -- l'ha scritta un dispositivo con l'orologio
+    avanti, o questo stesso prima che venisse corretto -- un ``now`` piu' piccolo
+    perde, e la stella appena premuta viene annullata dalla sincronizzazione
+    successiva: il pulsante cambia, la riga esce dall'elenco, e qualche secondo dopo
+    e' tornata. Nessun comando dell'interfaccia permette di uscirne, perche' ogni
+    nuovo tentativo scrive un orario ancora perdente.
+
+    Il ``+ 1.0`` non e' prudenza: a parita' esatta ``merge_favourite`` tiene lo stato
+    conservativo, cioe' *preferito*. Fermarsi a ``max(now, stamp)`` lascerebbe quindi
+    perdere proprio il caso che si vuole far vincere -- togliere una stella.
+    """
+    return max(now, _to_float(record.get("toggled_at")) + 1.0)
+
+
 def prune_removed(records: dict, now: float) -> dict:
     """Drop tombstones older than the TTL. Live records are returned untouched.
 

@@ -21,9 +21,25 @@ from pathlib import Path
 from PySide6.QtCore import QStandardPaths
 
 from .canonical import canonical_key
-from .merge import merge_favourite
+from .merge import as_toggled, merge_favourite
 from .net import sanitize_name
 from .portal_filter import entries_for_portal, entries_outside_portal, entry_portal
+
+
+def _to_float(value: object, default: float = 0.0) -> float:
+    """Un orario come numero, qualunque cosa ci sia scritto nel file.
+
+    Gemello di quello della cronologia e di ``_toDouble`` nell'app Android: i tre
+    devono concordare, perche' e' da questo che dipende l'ordine degli elenchi.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return default
 
 
 class FavoritesStore:
@@ -43,7 +59,15 @@ class FavoritesStore:
             data = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):
             return {}
-        return data if isinstance(data, dict) else {}
+        # Si scartano anche le singole voci che non sono dizionari, non solo un file
+        # che non lo e': da qui in poi tutto -- migrazioni, potatura, fusione, elenco
+        # -- si aspetta di trovarne uno, e una riga scritta a mano o da un altro
+        # programma faceva cadere l'app all'avvio, prima che qualunque finestra
+        # esistesse. La cronologia si difendeva cosi' da sempre e il suo commento
+        # diceva "come nei preferiti": ora e' vero.
+        if not isinstance(data, dict):
+            return {}
+        return {k: v for k, v in data.items() if isinstance(v, dict)}
 
     def _save(self) -> None:
         try:
@@ -113,7 +137,10 @@ class FavoritesStore:
                 # episodi.
                 "source_id": source_id or entry.get("source_id", ""),
                 "is_favourite": bool(is_favorite),
-                "toggled_at": time.time(),
+                # Non l'ora secca: se la riga porta un orario nel futuro, scritto da un
+                # dispositivo con l'orologio avanti, un orario piu' piccolo perderebbe
+                # la fusione e la stella appena premuta tornerebbe come prima.
+                "toggled_at": as_toggled(entry, time.time()),
             }
         )
         self._data[key] = entry
@@ -156,7 +183,12 @@ class FavoritesStore:
         preferiti nascosti, sono preferiti rimossi.
         """
         entries = entries_for_portal(self._live(), portal)
-        entries.sort(key=lambda e: e.get("toggled_at", 0), reverse=True)
+        # Convertito, non letto cosi' com'e': un orario scritto come testo -- da una
+        # modifica a mano, da un programma di sincronizzazione cartelle, da un altro
+        # scrittore -- faceva cadere l'ordinamento con un TypeError, cioe' l'intera
+        # scheda. Il gemello Android converte da sempre, e questo e' anche cio' che
+        # tiene identico l'ordine fra le due app.
+        entries.sort(key=lambda e: _to_float(e.get("toggled_at")), reverse=True)
         return entries
 
     def outside_portal(self, portal: str | None) -> int:
@@ -185,7 +217,9 @@ class FavoritesStore:
             if portal is not None and entry_portal(entry) != portal:
                 continue
             entry["is_favourite"] = False
-            entry["toggled_at"] = now
+            # Come la stella: svuotare e' la stessa azione in grande, e con un orario
+            # perdente l'elenco si ripopolerebbe alla prima sincronizzazione.
+            entry["toggled_at"] = as_toggled(entry, now)
             changed = True
         if changed:
             self._save()

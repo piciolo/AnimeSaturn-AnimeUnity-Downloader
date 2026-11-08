@@ -36,6 +36,7 @@ import pathlib
 import sys
 
 from gui.merge import (
+    as_toggled,
     as_tombstone,
     as_watched,
     is_removed,
@@ -135,12 +136,14 @@ def esegui_potatura(casi: list[dict]) -> int:
 
 def esegui_orari(casi: list[dict]) -> int:
     falliti = 0
-    print("\n=== orari di rimozione e ripresa ===")
+    print("\n=== orari di rimozione, ripresa e stella ===")
     for caso in casi:
         nome = caso.get("name", "(caso senza nome)")
         record, ora = caso["record"], caso["now"]
         if caso["action"] == "remove":
             ottenuto = as_tombstone(record, ora)
+        elif caso["action"] == "toggle":
+            ottenuto = dict(record, toggled_at=as_toggled(record, ora))
         else:
             ottenuto = dict(record, updated_at=as_watched(record, ora))
         falliti += _riporta(nome, _scostamenti(caso["expect"], ottenuto, None))

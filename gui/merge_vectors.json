@@ -703,6 +703,51 @@
       "expect": {
         "updated_at": 9001.0
       }
+    },
+    {
+      "name": "toccare la stella si segna all'ora in cui si tocca",
+      "action": "toggle",
+      "record": {
+        "is_favourite": false,
+        "toggled_at": 1000.0
+      },
+      "now": 2000.0,
+      "expect": {
+        "toggled_at": 2000.0
+      }
+    },
+    {
+      "name": "una stella mai toccata prende l'ora cosi' com'e'",
+      "action": "toggle",
+      "record": {},
+      "now": 2000.0,
+      "expect": {
+        "toggled_at": 2000.0
+      }
+    },
+    {
+      "name": "con un orario nel futuro sulla riga, la stella vince comunque",
+      "action": "toggle",
+      "record": {
+        "is_favourite": true,
+        "toggled_at": 5000.0
+      },
+      "now": 2000.0,
+      "expect": {
+        "toggled_at": 5001.0
+      }
+    },
+    {
+      "name": "a parita' esatta si supera di uno, o togliere la stella perderebbe",
+      "action": "toggle",
+      "record": {
+        "is_favourite": true,
+        "toggled_at": 2000.0
+      },
+      "now": 2000.0,
+      "expect": {
+        "toggled_at": 2001.0
+      }
     }
   ]
 }
