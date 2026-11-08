@@ -58,6 +58,11 @@ def _friendly(message: str) -> str:
         "USER_DISABLED": "Questo account è stato disabilitato.",
         "TOO_MANY_ATTEMPTS_TRY_LATER":
             "Troppi tentativi. Riprova fra qualche minuto.",
+        "MISSING_EMAIL": "Scrivi l'indirizzo email dell'account.",
+        "RESET_PASSWORD_EXCEED_LIMIT":
+            "Troppe richieste di reimpostazione. Riprova fra qualche minuto.",
+        "INVALID_ID_TOKEN": "Sessione scaduta, accedi di nuovo.",
+        "TOKEN_EXPIRED": "Sessione scaduta, accedi di nuovo.",
     }
     for code, italian in table.items():
         if message.startswith(code):
@@ -128,9 +133,37 @@ class CloudConfig:
     def last_sync(self) -> float:
         return float(self._data.get("last_sync", 0) or 0)
 
+    @property
+    def last_email(self) -> str:
+        """L'ultima email usata, anche dopo l'uscita: un promemoria, non una credenziale.
+
+        «Non ricordo con quale account mi ero iscritto» non si risolve cercando: nessuna
+        API dice quali indirizzi esistono, e di proposito -- servirebbe a chiunque per
+        scoprire se una persona e' registrata. L'unica cosa utile e' che l'app non
+        dimentichi cio' che sapeva, e finora uscendo lo dimenticava.
+
+        Da sola non apre niente: per entrare servono comunque la password, o il link di
+        reimpostazione che arriva a quella casella.
+        """
+        return self._data.get("email") or self._data.get("last_email", "")
+
+    @property
+    def email_verified(self) -> bool:
+        return bool(self._data.get("email_verified"))
+
+    def set_verified(self, verified: bool) -> None:
+        self._data["email_verified"] = bool(verified)
+        self.save()
+
     def set_session(self, *, user_id: str, refresh_token: str, email: str) -> None:
         self._data.update(
-            {"user_id": user_id, "refresh_token": refresh_token, "email": email}
+            {
+                "user_id": user_id,
+                "refresh_token": refresh_token,
+                "email": email,
+                # Tenuta a parte perche' deve sopravvivere a ``clear_session``.
+                "last_email": email,
+            }
         )
         self.save()
 
@@ -139,7 +172,14 @@ class CloudConfig:
         self.save()
 
     def clear_session(self) -> None:
-        for key in ("user_id", "refresh_token", "email", "last_sync"):
+        # ``last_email`` NON si cancella: e' l'unico indizio su quale account si abbia, e
+        # cancellarlo proprio uscendo lo togliva nel momento in cui serve. Lo stato della
+        # verifica invece si butta: appartiene alla sessione, e la prossima potrebbe
+        # essere di un altro account.
+        if self.email:
+            self._data["last_email"] = self.email
+        for key in ("user_id", "refresh_token", "email", "last_sync",
+                    "email_verified"):
             self._data.pop(key, None)
         self.save()
 
@@ -184,6 +224,63 @@ class CloudClient:
             "signUp", {"email": email, "password": password, "returnSecureToken": True}
         )
         self._store_session(data, email)
+        # La verifica parte subito, ma se non parte l'iscrizione resta valida: a questo
+        # punto l'account esiste davvero, e sollevare farebbe credere il contrario --
+        # con la password gia' impostata su un account che l'utente crede non creato.
+        # La schermata account mostra l'avviso e offre di rimandarla.
+        try:
+            self.send_email_verification()
+        except CloudError:
+            pass
+
+    def send_password_reset(self, email: str) -> None:
+        """Chiede a Firebase il link per reimpostare la password.
+
+        Funziona **da disconnessi**, che e' l'unico stato in cui serva: non richiede un
+        token di sessione, solo la chiave pubblicabile che l'app porta gia'. Finora non
+        esisteva, quindi una password perduta era un account perduto, con dentro la
+        cronologia e i preferiti di mesi.
+
+        Un indirizzo che non esiste **non** viene segnalato: Firebase risponde «fatto»
+        comunque, per non offrire a chiunque il modo di scoprire se una persona e'
+        registrata. Misurato contro il progetto, non supposto: un indirizzo malformato
+        torna «non valido» e uno vuoto «scrivi l'indirizzo», ma uno inesistente e ben
+        scritto passa in silenzio.
+
+        Chi chiama non puo' quindi promettere che l'email arrivera', e non deve: il solo
+        messaggio onesto e' «se esiste un account con questo indirizzo, il link arrivera'
+        li'». Dire «inviata» sarebbe una bugia proprio verso chi ha sbagliato a scrivere.
+        """
+        self._auth_call(
+            "sendOobCode", {"requestType": "PASSWORD_RESET", "email": email}
+        )
+
+    def send_email_verification(self) -> None:
+        """Manda, o rimanda, l'email di verifica all'indirizzo dell'account.
+
+        Questa vuole il token della sessione: si verifica l'indirizzo di chi e' entrato,
+        non uno qualunque. Conta piu' di quanto sembri — un indirizzo digitato male non
+        si scopre finche' non serve, cioe' quando la password e' perduta e il link di
+        reimpostazione parte verso una casella che non e' la tua. Da li' non c'e' piu'
+        nessuna strada per rientrare.
+        """
+        self._auth_call(
+            "sendOobCode", {"requestType": "VERIFY_EMAIL", "idToken": self._token()}
+        )
+
+    def refresh_email_verified(self) -> bool:
+        """Chiede a Firebase se l'indirizzo e' stato confermato, e lo ricorda.
+
+        Si chiede con ``lookup`` invece di leggerlo dalla risposta dell'accesso, perche'
+        la conferma avviene **fuori dall'app**: in una casella di posta, magari su un
+        altro dispositivo. Un valore letto entrando invecchierebbe da solo, e l'avviso
+        resterebbe in piedi per sempre anche dopo aver fatto la cosa giusta.
+        """
+        data = self._auth_call("lookup", {"idToken": self._token()})
+        utenti = data.get("users") or [{}]
+        verificata = bool(utenti[0].get("emailVerified"))
+        self.config.set_verified(verificata)
+        return verificata
 
     def sign_in(self, email: str, password: str) -> None:
         data = self._auth_call(

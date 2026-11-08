@@ -61,6 +61,12 @@ class AccountDialog(QDialog):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
+        self.verify_note = QLabel("")
+        self.verify_note.setObjectName("Muted")
+        self.verify_note.setWordWrap(True)
+        self.verify_note.setVisible(False)
+        layout.addWidget(self.verify_note)
+
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
         self.signup_button = QPushButton("Crea account")
@@ -72,6 +78,16 @@ class AccountDialog(QDialog):
         self.signin_button.setObjectName("Primary")
         self.signin_button.clicked.connect(self._sign_in)
         buttons.addWidget(self.signin_button)
+
+        self.forgot_button = QPushButton("Password dimenticata?")
+        self.forgot_button.setObjectName("Ghost")
+        self.forgot_button.clicked.connect(self._reset_password)
+        buttons.addWidget(self.forgot_button)
+
+        self.verify_button = QPushButton("Rimanda email di verifica")
+        self.verify_button.setObjectName("Ghost")
+        self.verify_button.clicked.connect(self._resend_verification)
+        buttons.addWidget(self.verify_button)
 
         self.signout_button = QPushButton("Esci")
         self.signout_button.setObjectName("Danger")
@@ -92,9 +108,28 @@ class AccountDialog(QDialog):
         row.addWidget(close)
         layout.addLayout(row)
 
+        self._check_verification()
         self._refresh_state()
 
     # ------------------------------------------------------------------ #
+    def _check_verification(self) -> None:
+        """Rilegge dal server se l'indirizzo e' stato confermato.
+
+        Solo quando risulta non confermato: una conferma non si annulla, quindi saputa
+        una volta non va richiesta piu', e si evita una chiamata di rete a ogni apertura.
+
+        E' il momento giusto per chiederlo: si apre questa finestra proprio dopo aver
+        cliccato il link nella posta, e un avviso che restasse in piedi dopo aver fatto
+        la cosa giusta insegnerebbe a ignorarlo.
+        """
+        config = self.client.config
+        if not config.signed_in or config.email_verified:
+            return
+        try:
+            self.client.refresh_email_verified()
+        except CloudError:
+            pass  # senza rete l'avviso resta: e' la supposizione prudente
+
     def _refresh_state(self) -> None:
         """Show either the sign-in form or the signed-in summary, never both."""
         config = self.client.config
@@ -103,8 +138,23 @@ class AccountDialog(QDialog):
             widget.setVisible(not signed_in)
         self.signup_button.setVisible(not signed_in)
         self.signin_button.setVisible(not signed_in)
+        self.forgot_button.setVisible(not signed_in)
         self.signout_button.setVisible(signed_in)
         self.sync_button.setVisible(signed_in)
+        self.verify_button.setVisible(signed_in and not config.email_verified)
+        if not signed_in and not self.email_input.text().strip():
+            # Il promemoria: uscendo, l'email era l'unico indizio su quale account si
+            # avesse, e veniva cancellata proprio in quel momento. Non e' una
+            # credenziale, e da sola non apre niente.
+            self.email_input.setText(config.last_email)
+        if signed_in and not config.email_verified:
+            self.verify_note.setText(
+                "⚠  Indirizzo non confermato. La sincronizzazione funziona, ma finché "
+                "non confermi non potrai reimpostare la password se la dimentichi: il "
+                "link arriverebbe a un indirizzo che forse non è il tuo. Controlla la "
+                "posta, anche quella indesiderata."
+            )
+        self.verify_note.setVisible(signed_in and not config.email_verified)
         if signed_in:
             when = config.last_sync
             detail = (
@@ -168,6 +218,55 @@ class AccountDialog(QDialog):
         self._refresh_state()
         self.signed_in.emit()
         self.sync_requested.emit()  # first sync merges this device into the account
+
+    def _reset_password(self) -> None:
+        """Manda il link per reimpostare la password all'indirizzo scritto.
+
+        Non passa da ``_credentials``: chiedere la password a chi l'ha dimenticata non
+        avrebbe senso, e qui serve il solo indirizzo.
+        """
+        email = self.email_input.text().strip()
+        if not email or "@" not in email:
+            self.status.setText("Scrivi l'indirizzo email del tuo account.")
+            return
+        self._busy("Invio del link…")
+        try:
+            self.client.send_password_reset(email)
+        except CloudError as exc:
+            self._done()
+            self.status.setText(str(exc))
+            return
+        self._done()
+        # Non si scrive «inviata». Firebase accetta in silenzio anche un indirizzo che
+        # non esiste, per non rivelare a chiunque chi e' registrato: promettere l'arrivo
+        # sarebbe una bugia proprio verso chi ha sbagliato a scrivere l'indirizzo, cioe'
+        # verso l'unico che da quel messaggio ha qualcosa da capire.
+        self.status.setText(
+            f"Se esiste un account con {email}, riceverai un'email col link per "
+            "reimpostare la password. Controlla anche la posta indesiderata."
+        )
+
+    def _resend_verification(self) -> None:
+        """Rimanda l'email di verifica, se serve ancora."""
+        self._busy("Controllo…")
+        try:
+            # Prima si guarda: il link puo' essere stato cliccato nel frattempo, e
+            # mandarne un'altra sarebbe posta inutile a chi ha gia' fatto la sua parte.
+            if self.client.refresh_email_verified():
+                self._done()
+                self._refresh_state()
+                self.status.setText("L'indirizzo è già confermato.")
+                return
+            self.client.send_email_verification()
+        except CloudError as exc:
+            self._done()
+            self.status.setText(str(exc))
+            return
+        self._done()
+        self.status.setText(
+            f"Email di verifica inviata a {self.client.config.email}. Controlla anche "
+            "la posta indesiderata, poi riapri questa finestra."
+        )
 
     def _sign_out(self) -> None:
         self.client.sign_out()
