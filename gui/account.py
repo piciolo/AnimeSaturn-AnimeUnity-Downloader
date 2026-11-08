@@ -21,6 +21,25 @@ from PySide6.QtWidgets import (
 from .cloud import CloudClient, CloudError
 
 
+#: Il consiglio sullo spam, scritto una volta sola.
+#:
+#: Le email di Firebase partono da un indirizzo ``firebaseapp.com``: un dominio che non e'
+#: nostro e senza storia d'invio, quindi i filtri lo trattano con sospetto. Cambiarlo
+#: richiederebbe un dominio proprio nel campo «Da», e non ce n'e' uno — percio' l'unica
+#: mitigazione vera e' quella che puo' fare chi riceve, e va detta.
+#:
+#: Non si scrive l'indirizzo esatto del mittente perche' non e' verificato: mandare a
+#: cercare nello spam una stringa sbagliata e' peggio che darne una generica. «
+#: firebaseapp.com» invece e' certo, e basta a trovarla.
+#:
+#: Compare in tre messaggi diversi: tre copie a mano diventerebbero tre consigli diversi
+#: al primo ritocco.
+_SPAM = (
+    "Se non la vedi, cerca «firebaseapp.com» nella posta indesiderata. "
+    "Segnalala come «non spam» e le prossime arriveranno normalmente."
+)
+
+
 class AccountDialog(QDialog):
     """Sign in or create an account, then sync history and favourites."""
 
@@ -162,8 +181,7 @@ class AccountDialog(QDialog):
             else:
                 self.verify_note.setText(
                     f"⚠  Email di verifica inviata a {config.email}: aprila e torna "
-                    "qui. Cercala anche nella posta indesiderata — il mittente è un "
-                    "indirizzo di Firebase, e spesso finisce lì.\n"
+                    f"qui.\n{_SPAM}\n"
                     "La sincronizzazione funziona già. Ma finché non confermi non "
                     "potrai reimpostare la password se la dimentichi: il link "
                     "arriverebbe a un indirizzo che forse non è il tuo."
@@ -257,7 +275,7 @@ class AccountDialog(QDialog):
         # verso l'unico che da quel messaggio ha qualcosa da capire.
         self.status.setText(
             f"Se esiste un account con {email}, riceverai un'email col link per "
-            "reimpostare la password. Controlla anche la posta indesiderata."
+            f"reimpostare la password.\n{_SPAM}"
         )
 
     def _resend_verification(self) -> None:
@@ -285,8 +303,8 @@ class AccountDialog(QDialog):
         self._done()
         self._refresh_state()
         self.status.setText(
-            f"Email di verifica inviata a {self.client.config.email}. Controlla anche "
-            "la posta indesiderata, poi riapri questa finestra."
+            f"Email di verifica inviata a {self.client.config.email}.\n{_SPAM}\n"
+            "Poi riapri questa finestra."
         )
 
     def _sign_out(self) -> None:
