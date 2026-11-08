@@ -36,6 +36,13 @@ DEFAULT_API_KEY = "AIzaSyCyQfsSP_x5ygNoV5AuozlTFYt4QTQ0nKM"
 DEFAULT_DATABASE_URL = (
     "https://animesaturn-default-rtdb.europe-west1.firebasedatabase.app"
 )
+#: L'indirizzo da cui Firebase manda le email di questo progetto.
+#:
+#: Non e' configurabile da qui: lo decide il progetto, e cambiarlo richiederebbe un
+#: dominio proprio nel campo «Da». Sta scritto perche' quelle email finiscono quasi
+#: sempre nella posta indesiderata, e cercarle senza sapere il mittente e' una caccia:
+#: con l'indirizzo intero diventa un copia-incolla.
+DEFAULT_SENDER = "noreply@animesaturn.firebaseapp.com"
 _TIMEOUT = 20.0
 # Refresh a little before the hour is up, so a long sync can't expire mid-flight.
 _REFRESH_MARGIN_S = 300

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .cloud import CloudClient, CloudError
+from .cloud import DEFAULT_SENDER, CloudClient, CloudError
 
 
 #: Il consiglio sullo spam, scritto una volta sola.
@@ -35,8 +35,10 @@ from .cloud import CloudClient, CloudError
 #: Compare in tre messaggi diversi: tre copie a mano diventerebbero tre consigli diversi
 #: al primo ritocco.
 _SPAM = (
-    "Se non la vedi, cerca «firebaseapp.com» nella posta indesiderata. "
-    "Segnalala come «non spam» e le prossime arriveranno normalmente."
+    "Quasi sempre finisce nella POSTA INDESIDERATA, e il mittente è\n"
+    f"      {DEFAULT_SENDER}\n"
+    "Cercalo lì, apri il link, e segnala il messaggio come «non spam»: "
+    "le prossime arriveranno nella posta in arrivo."
 )
 
 
@@ -78,11 +80,13 @@ class AccountDialog(QDialog):
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
+        self.status.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.status)
 
         self.verify_note = QLabel("")
         self.verify_note.setObjectName("Muted")
         self.verify_note.setWordWrap(True)
+        self.verify_note.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.verify_note.setVisible(False)
         layout.addWidget(self.verify_note)
 
@@ -180,8 +184,8 @@ class AccountDialog(QDialog):
                 )
             else:
                 self.verify_note.setText(
-                    f"⚠  Email di verifica inviata a {config.email}: aprila e torna "
-                    f"qui.\n{_SPAM}\n"
+                    f"⚠  Email di verifica inviata a {config.email} — aprila e "
+                    f"torna qui.\n\n{_SPAM}\n\n"
                     "La sincronizzazione funziona già. Ma finché non confermi non "
                     "potrai reimpostare la password se la dimentichi: il link "
                     "arriverebbe a un indirizzo che forse non è il tuo."
