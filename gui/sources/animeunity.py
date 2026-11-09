@@ -294,14 +294,14 @@ class AnimeUnitySource(AnimeSource):
         ]
         return {"episodes": episodes, "plot": "", "genres": []}
 
-    def resolve_download_url(self, watch_path: str) -> str:
+    def resolve_download_url(self, watch_path: str, quality: str = "") -> str:
         try:
             episode_id = int(str(watch_path).strip())
         except (TypeError, ValueError) as exc:
             raise RuntimeError(
                 f"Episodio AnimeUnity non valido ({watch_path})."
             ) from exc
-        return self.client.resolve_download_url(episode_id)
+        return self.client.resolve_download_url(episode_id, quality)
 
     def close(self) -> None:
         self.client.close()

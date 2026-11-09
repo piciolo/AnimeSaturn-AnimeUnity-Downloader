@@ -46,8 +46,15 @@ class AnimeSource(ABC):
         """Return ``{"episodes": [...], "plot": str, "genres": [str]}``."""
 
     @abstractmethod
-    def resolve_download_url(self, watch_path: str) -> str:
-        """Turn an episode path into a direct, playable media URL."""
+    def resolve_download_url(self, watch_path: str, quality: str = "") -> str:
+        """Turn an episode path into a direct, playable media URL.
+
+        ``quality`` (``"1080p"``, ``"720p"``, ``"480p"``, oppure ``""`` per «quella che
+        c'e'») e' una **preferenza**, non un ordine: un portale che non offre scelta la
+        ignora, e un portale che la offre ripiega su cio' che ha quando la risoluzione
+        chiesta non esiste per quell'episodio. Nessun episodio deve restare non
+        riproducibile per via di una preferenza.
+        """
 
     def fetch_genres(self) -> list[dict]:
         """Browsable genres. Optional: a portal without a genre page returns nothing."""

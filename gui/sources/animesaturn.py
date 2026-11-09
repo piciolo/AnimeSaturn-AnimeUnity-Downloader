@@ -45,7 +45,12 @@ class AnimeSaturnSource(AnimeSource):
     def fetch_anime_detail(self, slug: str) -> dict:
         return self.client.fetch_anime_detail(slug)
 
-    def resolve_download_url(self, watch_path: str) -> str:
+    def resolve_download_url(self, watch_path: str, quality: str = "") -> str:
+        # ``quality`` si ignora, e non per pigrizia: qui un episodio e' un file solo.
+        # La risposta del player porta tre campi, e i due oltre alla sorgente sono vuoti
+        # (misurato). Accettare il parametro e non usarlo e' piu' onesto che far credere
+        # a chi chiama di avere una scelta che il portale non offre.
+        del quality
         return self.client.resolve_download_url(watch_path)
 
     def fetch_genres(self) -> list[dict]:

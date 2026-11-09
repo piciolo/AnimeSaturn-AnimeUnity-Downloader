@@ -294,14 +294,21 @@ class SourceRegistry:
                 continue
         return detail
 
-    def resolve_download_url(self, watch_path: str, source_id: str = "") -> str:
+    def resolve_download_url(
+        self, watch_path: str, source_id: str = "", quality: str = ""
+    ) -> str:
         source = self.get(source_id)
         if source is None:
             raise RuntimeError("Nessuna sorgente disponibile.")
-        return source.resolve_download_url(watch_path)
+        return source.resolve_download_url(watch_path, quality)
 
     def resolve_with_fallback(
-        self, watch_path: str, source_id: str, title: str, episode_number: str
+        self,
+        watch_path: str,
+        source_id: str,
+        title: str,
+        episode_number: str,
+        quality: str = "",
     ) -> tuple[str, str]:
         """Play an episode, trying the other portals if its own cannot serve it.
 
@@ -316,7 +323,10 @@ class SourceRegistry:
         preferred = self.get(source_id)
         if preferred is not None:
             try:
-                return preferred.resolve_download_url(watch_path), preferred.id
+                return (
+                    preferred.resolve_download_url(watch_path, quality),
+                    preferred.id,
+                )
             except Exception as exc:  # noqa: BLE001 - that is what the fallback is for
                 errors.append(f"{preferred.label}: {exc}")
 
@@ -338,8 +348,11 @@ class SourceRegistry:
                     detail = source.fetch_anime_detail(record.get("slug", ""))
                     for episode in detail.get("episodes", []):
                         if str(episode.get("number")) == str(episode_number):
+                            # La preferenza segue anche nel ripiego: ripescare
+                            # l'episodio su un altro portale non e' una ragione per
+                            # ignorare la qualita' chiesta.
                             url = source.resolve_download_url(
-                                episode.get("watch_path", "")
+                                episode.get("watch_path", ""), quality
                             )
                             if url:
                                 return url, source.id

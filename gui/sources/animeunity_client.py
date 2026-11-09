@@ -33,6 +33,8 @@ DEFAULT_BASE_URL = "https://www.animeunity.co"
 
 # Regex used to pull the direct download link out of the video page scripts.
 DOWNLOAD_LINK_PATTERN = re.compile(r"window\.downloadUrl\s*=\s*'(https?://[^\s']+)'")
+#: La risoluzione dentro l'indirizzo del file: ``.../16e3cbbe-.../1080p.mp4``.
+QUALITY_RE = re.compile(r"/(\d+)p\.mp4")
 CSRF_META_PATTERN = re.compile(r'name="csrf-token"\s+content="([^"]+)"')
 
 # The API paginates episodes; this is the maximum window it accepts per request.
@@ -232,8 +234,12 @@ class AnimeUnityClient:
     # ------------------------------------------------------------------ #
     # Download-link resolution
     # ------------------------------------------------------------------ #
-    def resolve_download_url(self, episode_id: int) -> str:
-        """Turn an episode id into a direct ``.mp4`` download URL."""
+    def resolve_download_url(self, episode_id: int, quality: str = "") -> str:
+        """Turn an episode id into a direct ``.mp4`` download URL.
+
+        ``quality`` (``"1080p"``, ``"720p"``, ``"480p"``) e' una **preferenza**: vedi
+        :meth:`_at_quality` per cosa succede quando non esiste.
+        """
         embed = self._client.get(f"{self.base_url}/embed-url/{episode_id}")
         embed.raise_for_status()
         video_page_url = embed.text.strip()
@@ -256,7 +262,37 @@ class AnimeUnityClient:
         if not match:
             message = f"Link di download non trovato per l'episodio {episode_id}."
             raise RuntimeError(message)
-        return match.group(1)
+        return self._at_quality(match.group(1), quality)
+
+    def _at_quality(self, url: str, quality: str) -> str:
+        """``url`` nella risoluzione preferita, se quella esiste davvero.
+
+        E' una preferenza e non una garanzia, e la differenza e' deliberata: non tutti
+        gli episodi hanno tutte le risoluzioni (misurato: 1080p, 720p e 480p ci sono,
+        360p no), e saperlo in anticipo costerebbe una richiesta per ciascuna **prima**
+        di poter mostrare un menu. Si prova percio' solo quella chiesta; se non c'e', si
+        tiene quella che il portale ha dato.
+
+        Il ripiego va in quella direzione per un motivo: un episodio piu' pesante del
+        voluto si scarica comunque, un episodio che non parte no. Fra le due, la scelta
+        che delude e' meglio di quella che fallisce.
+
+        Quando la qualita' chiesta e' gia' quella data, non si chiede niente a nessuno:
+        nel caso comune questo non costa una sola richiesta in piu'.
+        """
+        if not quality:
+            return url
+        corrente = QUALITY_RE.search(url)
+        voluta = quality.rstrip("p")
+        if not corrente or corrente.group(1) == voluta:
+            return url
+        candidato = QUALITY_RE.sub(f"/{voluta}p.mp4", url)
+        try:
+            # Due byte bastano a sapere se il file c'e': non si scarica nulla.
+            sonda = self._client.get(candidato, headers={"Range": "bytes=0-1"})
+        except httpx.HTTPError:
+            return url
+        return candidato if sonda.status_code in (200, 206) else url
 
     # ------------------------------------------------------------------ #
     # Binary fetches (posters + episode files)
