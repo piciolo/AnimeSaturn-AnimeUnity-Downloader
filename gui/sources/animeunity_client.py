@@ -241,7 +241,16 @@ class AnimeUnityClient:
             message = f"Embed URL non valido per l'episodio {episode_id}."
             raise RuntimeError(message)
 
-        page = self._client.get(video_page_url)
+        # Il ``Referer`` non e' decorazione: senza, il server del video risponde 403 e
+        # su questo portale non si riproduce ne' si scarica nulla. Misurato: con le sole
+        # intestazioni predefinite 403, con ``Origin`` ancora 403, con ``Referer`` 200.
+        #
+        # Si usa ``self.base_url`` e non un indirizzo fisso perche' il dominio di
+        # AnimeUnity cambia e viene curato a caldo: scritto a mano, tornerebbe a
+        # mentire al primo trasloco.
+        page = self._client.get(
+            video_page_url, headers={"Referer": f"{self.base_url}/"}
+        )
         page.raise_for_status()
         match = DOWNLOAD_LINK_PATTERN.search(page.text)
         if not match:
