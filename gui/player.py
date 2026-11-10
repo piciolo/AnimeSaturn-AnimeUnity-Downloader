@@ -339,11 +339,16 @@ class PlayerWindow(QDialog):
         resume_ms: int = 0,
         local_path: str = "",
         source_id: str = "",
+        quality: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.client = client
         self.source_id = source_id
+        # Fissata all'apertura e non riletta a ogni richiesta: cambiarla mentre un
+        # episodio sta andando non deve cambiare il flusso sotto i piedi di chi guarda.
+        # La prossima apertura prendera' quella nuova.
+        self.quality = quality
         self.anime_title = anime_title
         self.episode = episode
         self.pool = pool
@@ -618,6 +623,7 @@ class PlayerWindow(QDialog):
             source_id=getattr(self.episode, "source_id", "") or self.source_id,
             title=self.anime_title,
             episode_number=str(self.episode.number),
+            quality=self.quality,
         )
         worker.signals.done.connect(self._on_resolved)
         worker.signals.error.connect(self._on_resolve_error)
@@ -1072,6 +1078,9 @@ class PlayerWindow(QDialog):
             source_id=getattr(self.episode, "source_id", "") or self.source_id,
             title=self.anime_title,
             episode_number=str(self.episode.number),
+            # La stessa di prima: una riconnessione deve riprendere ciò che si stava
+            # guardando, non cambiare qualità a metà episodio.
+            quality=self.quality,
         )
         worker.signals.done.connect(self._on_recover_resolved)
         worker.signals.error.connect(self._on_recover_error)

@@ -1950,6 +1950,10 @@ class MainWindow(QMainWindow):
             resume_ms=resume_ms,
             local_path=local_path,
             source_id=source_id,
+            # Vale anche per guardare, non solo per scaricare: con una connessione
+            # lenta, 480p parte prima e non si blocca. Letta adesso, cosi' ogni
+            # apertura ubbidisce alla scelta corrente.
+            quality=self.settings.preferred_quality,
             parent=None,  # unowned top-level: its own taskbar button + working minimise
         )
         window.download_requested.connect(self._enqueue_one)

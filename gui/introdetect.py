@@ -385,6 +385,14 @@ class IntroDetector(QObject):
             source_id=self.source_id,
             title=self.title,
             episode_number=self.ref_ep,
+            # Qui la qualita' preferita NON si passa, ed e' voluto. Si confrontano
+            # impronte audio fra episodi diversi, e contro quelle gia' in cache: prese
+            # da file codificati in modo diverso potrebbero non corrispondere piu', e
+            # il modo in cui l'utente se ne accorgerebbe e' che la sigla smette di
+            # essere riconosciuta, senza un errore da nessuna parte.
+            #
+            # Il risparmio sarebbe comunque piccolo: di un episodio si scaricano i soli
+            # intervalli di byte dell'audio, non il file.
         )
         # Bound methods (not lambdas) so the slot runs queued on THIS (main) thread:
         # QAudioDecoder must be created/used on the thread with the event loop.
