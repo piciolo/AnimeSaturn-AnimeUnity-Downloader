@@ -270,6 +270,7 @@ class DownloadTask(QRunnable):
         dest_dir: Path,
         *,
         source_id: str = "",
+        quality: str = "",
     ) -> None:
         """Due oggetti e non uno, perche' le due meta' del lavoro non sono uguali.
 
@@ -290,6 +291,7 @@ class DownloadTask(QRunnable):
         self.episode = episode
         self.dest_dir = dest_dir
         self.source_id = source_id
+        self.quality = quality
         self.signals = DownloadSignals()
         self._cancel = threading.Event()
         self._response = None
@@ -349,6 +351,7 @@ class DownloadTask(QRunnable):
                 self.source_id,
                 self.anime_title,
                 self.episode.number,
+                self.quality,
             )
 
             filename = build_filename(self.anime_title, self.episode, download_url)

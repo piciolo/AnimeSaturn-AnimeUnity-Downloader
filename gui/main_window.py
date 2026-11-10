@@ -2050,6 +2050,9 @@ class MainWindow(QMainWindow):
             episode,
             dest_dir,
             source_id=source_id,
+            # Letta adesso e non tenuta da parte: cambiandola fra un download e il
+            # successivo, il successivo deve ubbidire a quella nuova.
+            quality=self.settings.preferred_quality,
         )
         task.signals.progress.connect(self._on_task_progress)
         task.signals.status.connect(self._on_task_status)

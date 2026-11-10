@@ -70,6 +70,25 @@ class AppSettings:
         self._settings.setValue("animeunity_base_url", value)
 
     @property
+    def preferred_quality(self) -> str:
+        """La risoluzione preferita per scaricare e riprodurre, o ``""`` per la migliore.
+
+        Vuoto e' il valore di partenza e vuol dire «quella che il portale da'»: finche'
+        non si sceglie, l'app si comporta come si e' sempre comportata. Vale come
+        preferenza anche dove non puo' essere onorata, perche' cambiando portale non
+        deve svanire -- lo spegnimento del comando riguarda cosa si puo' *scegliere*,
+        non cosa resta *scelto*.
+        """
+        return str(self._settings.value("preferred_quality", "") or "")
+
+    @preferred_quality.setter
+    def preferred_quality(self, value: str) -> None:
+        if value:
+            self._settings.setValue("preferred_quality", value)
+        else:
+            self._settings.remove("preferred_quality")
+
+    @property
     def default_portal(self) -> str:
         """Il portale scelto come predefinito, o ``""`` per chiedere a ogni avvio.
 

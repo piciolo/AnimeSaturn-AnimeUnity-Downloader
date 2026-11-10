@@ -110,6 +110,19 @@ class SourceRegistry:
             return None
         return portal if any(s.id == portal for s in self._sources) else None
 
+    def quality_options(self) -> dict[str, str]:
+        """Le qualita' offerte da almeno uno dei portali attivi.
+
+        Vuoto quando nessuno ne offre: allora non c'e' niente da scegliere, e il comando
+        va spento dicendo perche'. Con piu' portali attivi si uniscono, perche' basta che
+        uno sappia onorarla -- la stessa regola degli avvisi sui filtri, e per la stessa
+        ragione: una possibilita' che esiste da qualche parte non va negata a monte.
+        """
+        unite: dict[str, str] = {}
+        for source in self._browse:
+            unite.update(source.quality_options())
+        return unite
+
     def expressible_filters(self) -> dict[str, set[str] | None]:
         """I filtri esprimibili da ALMENO uno dei portali attivi.
 

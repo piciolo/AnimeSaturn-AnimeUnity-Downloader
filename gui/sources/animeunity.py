@@ -30,6 +30,18 @@ from .base import AnimeSource
 # viene saltata del tutto. Restituire risultati non filtrati sarebbe peggio che
 # non restituirne -- e' esattamente il difetto per cui, filtrando per anno, si
 # vedevano anime di altri anni.
+#: Le risoluzioni che questo portale serve per lo stesso episodio.
+#:
+#: Misurate su un episodio vero: 1080p 291 MB, 720p 164 MB, 480p 104 MB; 360p non
+#: esiste. Sono una preferenza e non una garanzia -- non tutti gli episodi le hanno
+#: tutte -- e chi risolve ripiega su cio' che il portale da' quando manca quella chiesta.
+QUALITY_OPTIONS: dict[str, str] = {
+    "Migliore disponibile": "",
+    "1080p": "1080p",
+    "720p": "720p",
+    "480p": "480p",
+}
+
 _TYPE_MAP = {"1": "TV", "2": "Movie", "3": "OVA", "4": "Special", "5": "ONA"}
 _STATE_MAP = {"0": "In Corso", "1": "Terminato"}
 _SEASON_MAP = {
@@ -156,6 +168,9 @@ class AnimeUnitySource(AnimeSource):
         self.client = client or AnimeUnityClient(base_url or DEFAULT_BASE_URL)
 
     # ------------------------------------------------------------------ #
+    def quality_options(self) -> dict[str, str]:
+        return dict(QUALITY_OPTIONS)
+
     def expressible_filters(self) -> dict[str, set[str] | None]:
         """La lingua originale qui non esiste; degli altri, solo i valori tradotti.
 

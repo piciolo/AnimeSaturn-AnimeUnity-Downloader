@@ -60,6 +60,20 @@ class AnimeSource(ABC):
         """Browsable genres. Optional: a portal without a genre page returns nothing."""
         return []
 
+    def quality_options(self) -> dict[str, str]:
+        """Le qualita' fra cui si puo' scegliere su questo portale, etichetta -> valore.
+
+        Vuoto quando non c'e' scelta, ed e' il caso normale: la maggior parte dei
+        portali serve un file solo per episodio. Dichiararlo qui evita all'interfaccia
+        di sapere quale portale puo' cosa — come per i filtri che un portale non sa
+        esprimere, il comando si disegna da cio' che le sorgenti dicono di se'.
+
+        Un elenco vuoto non vuol dire «non si puo' scaricare»: vuol dire «non c'e' da
+        scegliere», e il comando va spento, non nascosto, o sembrera' un pezzo di app
+        perduto invece di una possibilita' che quel portale non offre.
+        """
+        return {}
+
     def expressible_filters(self) -> dict[str, set[str] | None]:
         """Quali filtri questo portale sa esprimere, dove non li sa esprimere tutti.
 
