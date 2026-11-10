@@ -201,6 +201,7 @@ class MainWindow(QMainWindow):
         # aperta; e si ricordano per anime, non globalmente, perche' e' proprio da
         # anime a anime che cambia.
         self._quality_seen: dict[tuple[str, str], list[str]] = {}
+        self._episodes_summary = ""
         self._query: dict = {
             "title": "", "sort": "standard", "dub": "", "filters": {}, "page": 1,
         }
@@ -552,7 +553,11 @@ class MainWindow(QMainWindow):
             offerte = self.sources.quality_options()
             nomi = " / ".join(portal_label(s.id) for s in self.sources.browsing)
         combo.setEnabled(bool(offerte))
-        self.quality_label.setEnabled(bool(offerte))
+        # L'etichetta NO: spenta, Qt non le manda i movimenti del mouse, quindi il suo
+        # suggerimento non si raggiunge — e si raggiungerebbe proprio quando serve, cioè
+        # quando la tendina è spenta e uno si chiede perché non può scegliere. È già
+        # grigia di suo («Muted»), quindi non promette nulla di cliccabile; a mostrarsi
+        # spenta basta la tendina.
         if offerte:
             # Al futuro e non al presente: qui il sondaggio non ha ancora risposto, e
             # dire che il menu «elenca solo» quelle vere sarebbe una promessa già
@@ -567,8 +572,9 @@ class MainWindow(QMainWindow):
                 f"{nomi} serve un file solo per episodio: non c'è una qualità fra "
                 "cui scegliere. La tua scelta resta per gli altri portali."
             )
+        # Sull'etichetta pure, cosi' la spiegazione c'e' da qualunque parte si passi.
+        # Non e' da qui che l'utente la ricava, pero': vedi la riga di riepilogo.
         combo.setToolTip(testo)
-        # Sull'etichetta pure: e' lei che porta la «ⓘ», ed e' li' che si cerca.
         self.quality_label.setToolTip(testo)
 
     def _reset_quality_availability(self) -> None:
@@ -589,6 +595,10 @@ class MainWindow(QMainWindow):
             self._mostra_riga_qualita(i, True)
             if i < len(getattr(self, "_quality_labels", [])):
                 combo.setItemText(i, self._quality_labels[i])
+        # Il riepilogo dell'anime precedente non vale per questo, e la riga NON si
+        # riscrive qui: chi apre una scheda ci ha appena messo «Caricamento episodi…»,
+        # e sostituirlo col riassunto di prima mostrerebbe i conti di un altro anime.
+        self._episodes_summary = ""
         self._apply_portal_to_quality()
 
     def _mostra_riga_qualita(self, riga: int, visibile: bool) -> None:
@@ -697,8 +707,10 @@ class MainWindow(QMainWindow):
         ha perso qualcosa — e la risoluzione mancante e' proprio quella che l'utente
         aveva scelto, quindi e' la domanda che si fara' per prima.
 
-        Sull'etichetta e non solo sulla tendina: l'etichetta porta la «ⓘ», ed e' li' che
-        si va a cercare una spiegazione.
+        Sull'etichetta e non solo sulla tendina, così c'è da qualunque parte si passi.
+        Ma non è da qui che l'utente la ricava: i suggerimenti di quest'app non compaiono
+        sulla macchina dove è stata provata, e il fatto che conta — quali qualità ci sono
+        — finisce perciò sulla riga che riassume l'anime, in chiaro.
         """
         combo = self.quality_combo
         elenco = ", ".join(disponibili)
@@ -721,6 +733,42 @@ class MainWindow(QMainWindow):
             testo += "\n\nVale per i download e per la riproduzione, e viene ricordata."
         combo.setToolTip(testo)
         self.quality_label.setToolTip(testo)
+
+        # In chiaro va la spiegazione, non il solo elenco: «disponibili» dice da sé che
+        # quelle sono le qualità che esistono, non quelle che l'app saprebbe offrire —
+        # ed è esattamente la frase che il suggerimento avrebbe dovuto portare.
+        self._scrivi_qualita_in_chiaro(
+            f"il {corrente} non c'è per questo anime — ci sono {elenco}"
+            if corrente and corrente not in disponibili
+            else f"qualità disponibili: {elenco}"
+        )
+
+    def _scrivi_qualita_in_chiaro(self, coda: str = "") -> None:
+        """Scrive sulla riga dell'anime cosa c'è da sapere sulle qualità.
+
+        In chiaro, e non soltanto in un suggerimento. Un suggerimento lo si trova solo
+        se si sospetta che ci sia, e su un comando spento non si raggiunge affatto:
+        questa riga invece la si legge comunque, ed è lì che uno guarda per sapere cosa
+        ha questo anime.
+
+        Senza ``coda`` la ricava da sé, e l'unica cosa da dire è il caso in cui non c'è
+        scelta: su un portale che serve un file solo per episodio, il silenzio
+        lascerebbe credere a un comando guasto.
+
+        Non tocca niente finché la riga non esiste: chi apre una scheda ci ha appena
+        scritto «Caricamento episodi…», e sostituirlo mostrerebbe i conti dell'anime
+        precedente.
+        """
+        if not self._episodes_summary:
+            return
+        if not coda:
+            anime = self._detail_anime
+            suo = self.sources.get(anime.source_id) if anime is not None else None
+            if suo is not None and not suo.quality_options():
+                coda = "una qualità sola per episodio"
+        self.episodes_status.setText(
+            f"{self._episodes_summary}  ·  {coda}" if coda else self._episodes_summary
+        )
 
     def _make_combo(self, options: dict) -> QComboBox:
         """Return a combo whose items carry their filter value as item data."""
@@ -909,9 +957,13 @@ class MainWindow(QMainWindow):
         self.episodes_status.setObjectName("Muted")
         bottom.addWidget(self.episodes_status)
         bottom.addStretch(1)
-        # La «ⓘ» non e' decorazione: il suggerimento spiega perche' la lista e' corta,
-        # e un suggerimento che nessuno sa di poter leggere non spiega niente.
-        self.quality_label = QLabel("Qualità ⓘ")
+        # Senza richiami a passarci sopra col mouse: in quest'app i suggerimenti non
+        # compaiono — non questo, nessuno — e un segno che promette una spiegazione
+        # inesistente manda a cercare qualcosa che non c'è. Perché non compaiano resta
+        # da capire (misurato ed escluso: widget spenti, foglio di stile, tavolozza,
+        # filtri sugli eventi); intanto le qualità stanno scritte sulla riga che
+        # riassume l'anime, dove si leggono senza fare niente.
+        self.quality_label = QLabel("Qualità:")
         self.quality_label.setObjectName("Muted")
         bottom.addWidget(self.quality_label)
         self.quality_combo = self._make_combo(self.sources.all_quality_options())
@@ -2069,7 +2121,13 @@ class MainWindow(QMainWindow):
             extra.append(f"{incomplete} da completare")
         if extra:
             summary += "  ·  " + ", ".join(extra)
+        # Tenuta da parte: il sondaggio delle qualità risponde dopo, e allora si
+        # aggiunge a questa riga invece di ricostruirla.
+        self._episodes_summary = summary
         self.episodes_status.setText(summary)
+        # Dove non c'è scelta lo si dice subito: il sondaggio non partirà nemmeno, e
+        # nessuno arriverebbe mai a scriverlo.
+        self._scrivi_qualita_in_chiaro()
         self.download_button.setEnabled(bool(episodes))
         self._probe_quality_availability(episodes)
 

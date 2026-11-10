@@ -455,10 +455,13 @@ def main() -> int:
 
     print()
     print("  e la lista corta si spiega, invece di sembrare un'app che ha perso roba:")
-    prova("l'etichetta porta la ⓘ, perché un consiglio invisibile non spiega niente",
-          "ⓘ" in finestra.quality_label.text(),
-          "etichetta = %r" % finestra.quality_label.text())
-    prova("e il consiglio dice che il menu elenca solo quelle che l'anime ha",
+    # Niente «ⓘ»: i suggerimenti di quest'app non compaiono sulla macchina dove è
+    # stata provata, e un segno che invita a cercarne uno manda a cercare il nulla.
+    prova("l'etichetta non promette un suggerimento da andare a cercare",
+          "ⓘ" not in finestra.quality_label.text(),
+          "etichetta = %r" % sicuro(finestra.quality_label.text()))
+    prova("il consiglio però c'è, per dove funziona, e dice che il menu elenca "
+          "solo quelle che l'anime ha",
           "solo le qualità" in finestra.quality_label.toolTip(),
           "tooltip = %r" % finestra.quality_label.toolTip()[:90])
     prova("dicendo anche quali sono",
@@ -528,6 +531,44 @@ def main() -> int:
           "ricordato = %r" % (finestra._quality_seen,))
 
     print()
+    print("  e le qualità si leggono anche senza passarci sopra col mouse:")
+    finestra._episodes_summary = "24 episodi disponibili"
+
+    # Caso uno: la qualità scelta c'è anche qui. Si dice solo quali sono.
+    combo.setCurrentIndex(i720)
+    finestra._apply_quality_availability(["720p", "480p"])
+    prova("la riga dell'anime le scrive in chiaro, e dice che sono «disponibili», "
+          "cioè quelle che esistono",
+          "qualità disponibili: 720p, 480p" in finestra.episodes_status.text(),
+          "riga = %r" % sicuro(finestra.episodes_status.text()))
+    prova("senza buttare via quello che la riga già diceva",
+          finestra.episodes_status.text().startswith("24 episodi disponibili"),
+          "riga = %r" % sicuro(finestra.episodes_status.text()))
+
+    # Caso due: a mancare è proprio la qualità scelta. È la domanda che uno si fa per
+    # prima, e la risposta non deve dipendere dal passarci sopra col mouse.
+    combo.setCurrentIndex(i1080)
+    finestra._apply_quality_availability(["720p", "480p"])
+    prova("e quando a mancare è proprio la tua scelta, lo dice la riga stessa",
+          "il 1080p non c'è per questo anime" in finestra.episodes_status.text(),
+          "riga = %r" % sicuro(finestra.episodes_status.text()))
+    prova("dicendo anche cosa c'è al suo posto",
+          "720p, 480p" in finestra.episodes_status.text(),
+          "riga = %r" % sicuro(finestra.episodes_status.text()))
+    prova("e la preferenza resta la tua, non viene riscritta",
+          finestra.settings.preferred_quality == "1080p",
+          "vale %r" % finestra.settings.preferred_quality)
+
+    # E il caso in cui NON si deve scrivere: scheda che si sta aprendo.
+    finestra._reset_quality_availability()
+    finestra.episodes_status.setText("Caricamento episodi…")
+    finestra._apply_quality_availability(["720p", "480p"])
+    prova("su una scheda che si sta ancora aprendo la riga non si tocca: "
+          "ci scriverebbe i conti dell'anime di prima",
+          finestra.episodes_status.text() == "Caricamento episodi…",
+          "riga = %r" % sicuro(finestra.episodes_status.text()))
+
+    print()
     print("  con «Tutti i portali», che è lo stato di partenza:")
     mw.choose_portal = lambda *a, **k: None
     finestra._change_portal()
@@ -548,6 +589,22 @@ def main() -> int:
           "un file solo" in combo.toolTip()
           and "AnimeSaturn" in combo.toolTip(),
           "tooltip = %r" % combo.toolTip()[:110])
+
+    # Il motivo deve essere RAGGIUNGIBILE da spento, che è lo stato in cui uno si
+    # chiede perché non può scegliere. Spegnendo anche l'etichetta non lo era: Qt non
+    # manda i movimenti del mouse ai widget spenti, quindi il suggerimento non parte.
+    prova("l'etichetta resta accesa, o il suo suggerimento sarebbe irraggiungibile "
+          "proprio da spento",
+          finestra.quality_label.isEnabled())
+    prova("e il suggerimento c'è anche sull'etichetta",
+          "un file solo" in finestra.quality_label.toolTip())
+
+    # E in chiaro, senza dipendere dal passaggio del mouse.
+    finestra._episodes_summary = "12 episodi disponibili"
+    finestra._scrivi_qualita_in_chiaro()
+    prova("la riga dell'anime lo scrive in chiaro, senza passarci sopra col mouse",
+          "una qualità sola per episodio" in finestra.episodes_status.text(),
+          "riga = %r" % sicuro(finestra.episodes_status.text()))
 
     finestra._detail_anime = Anime(
         slug="akame-ga-kill", title="Akame ga Kill!", poster="", anime_type="TV",
