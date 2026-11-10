@@ -360,7 +360,9 @@ class DownloadTask(QRunnable):
                 self.quality,
             )
 
-            filename = build_filename(self.anime_title, self.episode, download_url)
+            filename = build_filename(
+                self.anime_title, self.episode, download_url, self.quality
+            )
             dest_path = self.dest_dir / filename
 
             if dest_path.exists():

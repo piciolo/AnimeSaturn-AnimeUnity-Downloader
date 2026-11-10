@@ -624,15 +624,48 @@ def episode_label(episode: "object") -> str:
     return "id?"
 
 
-def build_filename(anime_title: str, episode: "object", download_url: str) -> str:
+#: La risoluzione dentro l'indirizzo del file, quando il portale ce la mette:
+#: ``.../16e3cbbe-.../1080p.mp4``. E' la sola fonte attendibile della qualita' davvero
+#: scaricata, perche' quella chiesta puo' aver ripiegato.
+_QUALITY_IN_URL = re.compile(r"/(\d+p)\.mp4")
+
+
+def build_filename(
+    anime_title: str, episode: "object", download_url: str, quality: str = ""
+) -> str:
     """Build a clean, readable output filename for an episode.
 
-    Example: ``Naruto - Ep 01.mp4``. The extension is taken from the resolved media
-    URL (AnimeSaturn serves ``.mp4``); the name itself is derived from the anime title
-    and the episode label so files sort naturally on disk.
+    Example: ``Naruto - Ep 01.mp4``, oppure ``Naruto - Ep 01 [720p].mp4`` quando una
+    risoluzione e' stata chiesta. L'estensione viene dall'indirizzo risolto; il nome dal
+    titolo e dall'etichetta dell'episodio, cosi' i file si ordinano da soli.
+
+    La qualita' nel nome non e' un vezzo: senza, lo stesso episodio in 480p e in 1080p
+    punta allo stesso file, i due download si sovrascrivono a vicenda e ne esce uno che
+    non e' nessuno dei due -- misurato su un file vero. E il controllo «gia' presente»
+    rispondeva di si' al 1080p perche' c'era il 480p, rendendo la scelta inutilizzabile
+    oltre la prima.
+
+    Quando nessuna risoluzione e' stata chiesta il nome resta quello di sempre: le
+    raccolte gia' scaricate non devono cambiare nome sotto i piedi di nessuno.
+
+    Le parentesi quadre sopravvivono a ``sanitize_name`` (verificato: sostituisce solo
+    ``\\ / : * ? " < > |``) e la rilevazione «gia' scaricato» continua a funzionare,
+    perche' confronta il prefisso fino all'episodio e vuole uno spazio o un punto dopo
+    -- e dopo l'episodio c'e' uno spazio.
     """
     ext = Path(urlparse(download_url).path).suffix or ".mp4"
     base = f"{sanitize_name(anime_title)} - Ep {episode_label(episode)}"
+    if quality:
+        # L'etichetta viene dall'INDIRIZZO RISOLTO, non dalla qualita' chiesta: la
+        # richiesta e' una preferenza e puo' ripiegare — chiedere 360p su un episodio
+        # che non ce l'ha restituisce il 1080p — e un file chiamato ``[360p]`` con
+        # dentro il 1080p sarebbe un'etichetta che mente, cioe' peggio di nessuna.
+        #
+        # Se l'indirizzo non porta una risoluzione non si etichetta: li' il portale
+        # serve un file solo, e non c'e' niente da distinguere.
+        vera = _QUALITY_IN_URL.search(download_url)
+        if vera:
+            base += f" [{vera.group(1)}]"
     return sanitize_name(base) + ext
 
 

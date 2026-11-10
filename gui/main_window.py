@@ -184,6 +184,17 @@ class MainWindow(QMainWindow):
         # perche' il portale e' cambiato mentre si guardava altro. Si rifa' quando si
         # torna a guardarla, non prima: vedi ``_refresh_catalog_if_stale``.
         self._catalog_stale = False
+        #: Cosa sta scendendo adesso: (cartella, titolo, episodio, qualita').
+        #:
+        #: Due compiti per lo stesso file non si fanno compagnia: scrivono lo stesso
+        #: ``.part``, e il secondo scambia per un residuo interrotto cio' che il primo
+        #: sta ancora scrivendo, riprendendo da un offset che nel frattempo si muove.
+        #: Il controllo «gia' presente» dentro il compito non basta: guarda il ``.mp4``
+        #: finito, e quando due partono insieme nessuno dei due lo vede.
+        #:
+        #: La qualita' fa parte della chiave di proposito: lo stesso episodio in 480p e
+        #: in 1080p sono due file diversi, e chiederli entrambi e' legittimo.
+        self._in_flight: dict[int, tuple] = {}
         self._query: dict = {
             "title": "", "sort": "standard", "dub": "", "filters": {}, "page": 1,
         }
@@ -2077,12 +2088,34 @@ class MainWindow(QMainWindow):
         anime = self._detail_anime
         dest_dir = Path(self.settings.download_dir) / sanitize_name(anime.title)
 
+        saltati = 0
         for episode in episodes:
             # Il portale della scheda aperta: e' da la' che vengono questi episodi.
-            self._enqueue_download(anime.title, episode, dest_dir, anime.source_id)
+            if not self._enqueue_download(
+                anime.title, episode, dest_dir, anime.source_id
+            ):
+                saltati += 1
 
         self.tabs.setCurrentIndex(self._downloads_tab_index)
         self._update_empty_queue()
+        if saltati:
+            # Dirlo, non tacerlo: premere Scarica e non veder succedere niente è il
+            # genere di silenzio che fa premere di nuovo — e premere di nuovo era
+            # esattamente ciò che rompeva il file.
+            dettaglio = (
+                "1 era già in download con la stessa qualità e non l'ho accodato "
+                "di nuovo"
+                if saltati == 1
+                else f"{saltati} erano già in download con la stessa qualità e non "
+                "li ho accodati di nuovo"
+            )
+            QMessageBox.information(
+                self,
+                "Già in coda",
+                f"{len(episodes) - saltati} in download.\n\n{dettaglio}: due "
+                "download dello stesso file si sovrascrivono a vicenda, e ne esce "
+                "un video rotto.",
+            )
 
     def _enqueue_download(
         self,
@@ -2090,7 +2123,12 @@ class MainWindow(QMainWindow):
         episode: Episode,
         dest_dir: Path,
         source_id: str = "",
-    ) -> None:
+    ) -> bool:
+        """Accoda un episodio, se non sta già scendendo. Vero se l'ha accodato."""
+        quality = self.settings.preferred_quality
+        chiave = (str(dest_dir), anime_title, str(episode.number), quality)
+        if chiave in self._in_flight.values():
+            return False
         self._task_counter += 1
         task_id = self._task_counter
         row = DownloadRow(task_id, f"{anime_title}  ·  {episode.number_label}")
@@ -2110,13 +2148,15 @@ class MainWindow(QMainWindow):
             source_id=source_id,
             # Letta adesso e non tenuta da parte: cambiandola fra un download e il
             # successivo, il successivo deve ubbidire a quella nuova.
-            quality=self.settings.preferred_quality,
+            quality=quality,
         )
         task.signals.progress.connect(self._on_task_progress)
         task.signals.status.connect(self._on_task_status)
         task.signals.finished.connect(self._on_task_finished)
         self._tasks[task_id] = task
+        self._in_flight[task_id] = chiave
         self.download_pool.start(task)
+        return True
 
     def _on_task_progress(self, task_id: int, downloaded: int, total: int, speed: float) -> None:
         row = self._rows.get(task_id)
@@ -2133,6 +2173,7 @@ class MainWindow(QMainWindow):
         if row:
             row.set_finished(success, message)
         self._tasks.pop(task_id, None)
+        self._in_flight.pop(task_id, None)
         self._update_empty_queue()
         if success:
             self._refresh_watch_views()  # a new file may belong in the library
@@ -2147,6 +2188,7 @@ class MainWindow(QMainWindow):
         if row:
             row.deleteLater()
         self._tasks.pop(task_id, None)
+        self._in_flight.pop(task_id, None)
         self._update_empty_queue()
 
     def _clear_finished(self) -> None:
