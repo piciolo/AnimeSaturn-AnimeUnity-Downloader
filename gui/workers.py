@@ -13,7 +13,12 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, Signal
 
 from .models import Anime, Episode
-from .net import AnimeSaturnClient, DownloadCancelled, build_filename
+from .net import (
+    AnimeSaturnClient,
+    DownloadCancelled,
+    build_filename,
+    quality_in_url,
+)
 from .portal_domains import resolve_animeunity_domain
 from .sources.registry import SourcesUnavailable
 
@@ -380,9 +385,31 @@ class DownloadTask(QRunnable):
             )
             dest_path = self.dest_dir / filename
 
+            # Cosa e' arrivato davvero: la qualita' chiesta e' una preferenza, e
+            # chiederne una che l'episodio non ha fa ripiegare su un'altra.
+            risolta = quality_in_url(download_url)
+            ripiegato = bool(self.quality and risolta and risolta != self.quality)
+
             if dest_path.exists():
-                self.signals.finished.emit(self.task_id, True, "Già presente")
+                # Dire di COSA, o chi ha chiesto il 1080p legge «fatto», non lo trova
+                # nella cartella e riprova — e riprovare era cio' che rompeva i file.
+                self.signals.finished.emit(
+                    self.task_id,
+                    True,
+                    f"Già presente — il {self.quality} non esiste per questo "
+                    f"episodio, c'è il {risolta}"
+                    if ripiegato
+                    else "Già presente",
+                )
                 return
+
+            if ripiegato:
+                # Durante lo scaricamento, cosi' non si scopre il ripiego dal nome del
+                # file a cose fatte.
+                self.signals.status.emit(
+                    self.task_id,
+                    f"{self.quality} non disponibile: scarico il {risolta}",
+                )
 
             with DownloadTask._claim_lock:
                 if dest_path in DownloadTask._claimed:

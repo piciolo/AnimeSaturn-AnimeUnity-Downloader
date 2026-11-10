@@ -558,8 +558,13 @@ class DownloadRow(QFrame):
 
         if success:
             self.bar.setValue(100)
-            if message == "Già presente":
-                self.status_label.setText("✓ Già presente")
+            # ``startswith`` e non uguaglianza: il messaggio puo' portare il motivo
+            # («il 1080p non esiste per questo episodio, c'è il 720p»), e quel motivo
+            # e' la ragione per cui il messaggio esiste. Resta un esito riuscito, non
+            # un errore: il file c'e'.
+            if message.startswith("Già presente"):
+                self.status_label.setText(f"✓ {message}")
+                self.status_label.setToolTip(message)
             else:
                 self.status_label.setText("✓ Completato")
             self.status_label.setStyleSheet("color:#3ecf8e;")

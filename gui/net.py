@@ -630,6 +630,17 @@ def episode_label(episode: "object") -> str:
 _QUALITY_IN_URL = re.compile(r"/(\d+p)\.mp4")
 
 
+def quality_in_url(download_url: str) -> str:
+    """La risoluzione che l'indirizzo dichiara (``"720p"``), o ``""`` se non ne porta.
+
+    E' la sola fonte attendibile di cosa si stia davvero scaricando: la qualita' chiesta
+    e' una preferenza e puo' ripiegare, e la differenza fra le due e' esattamente cio'
+    che va detto all'utente invece che taciuto.
+    """
+    trovata = _QUALITY_IN_URL.search(download_url)
+    return trovata.group(1) if trovata else ""
+
+
 def build_filename(
     anime_title: str, episode: "object", download_url: str, quality: str = ""
 ) -> str:
