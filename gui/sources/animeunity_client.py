@@ -264,14 +264,83 @@ class AnimeUnityClient:
             raise RuntimeError(message)
         return self._at_quality(match.group(1), quality)
 
+    def available_qualities(self, episode_id: int) -> list[str]:
+        """Le risoluzioni che esistono davvero per questo episodio, dalla piu' alta.
+
+        Il portale non le dichiara da nessuna parte. La pagina del player non ne porta
+        un elenco: verificato leggendo il contorno di ogni numero che vi compare, e
+        sono una tabella di costanti offuscate e dell'aritmetica di fuso orario
+        (``t>720||t<-720``). Contarle sembrava funzionare e non voleva dire niente.
+        L'unico modo onesto e' chiedere ai file.
+
+        Costa il risolvere -- due richieste, le stesse che servono per scaricare -- piu'
+        una sonda di due byte per ciascuna delle altre due risoluzioni. Quella che il
+        portale consegna esiste per definizione e non si prova.
+
+        Vuoto se la risoluzione non compare nemmeno nell'indirizzo: li' non c'e' scelta
+        da offrire, e dire «non lo so» e' meglio che indovinare.
+        """
+        url = self.resolve_download_url(episode_id)
+        corrente = QUALITY_RE.search(url)
+        if not corrente:
+            return []
+        esistenti = {corrente.group(1)}
+        for voluta in ("1080", "720", "480"):
+            if voluta in esistenti:
+                continue
+            esito = self._file_esiste(QUALITY_RE.sub(f"/{voluta}p.mp4", url))
+            if esito is None:
+                # Un sondaggio a metà è peggio di nessun sondaggio: l'elenco parziale
+                # verrebbe ricordato per tutta la sessione, e nasconderebbe una
+                # risoluzione che c'è. Meglio non sapere e offrire tutto.
+                return []
+            if esito:
+                esistenti.add(voluta)
+        return [f"{n}p" for n in sorted(esistenti, key=int, reverse=True)]
+
+    def _file_esiste(self, url: str) -> bool | None:
+        """Se quel file c'è: ``True``, ``False``, oppure ``None`` per «non si è capito».
+
+        Tre risposte e non due. Un 403, un 429, un 503 o una connessione caduta non
+        dicono «questa risoluzione non esiste»: letti come un no, nascondono una qualità
+        che c'era — e chi chiama ricorda la risposta, quindi la nasconderebbe per tutta
+        la sessione.
+
+        E si legge solo l'intestazione, senza tirare giù il corpo. ``Range`` è una
+        richiesta, non un obbligo: un server che la ignorasse risponderebbe 200 con il
+        file intero, e ``get`` lo bufferizza — centinaia di megabyte per sapere se un
+        file esiste. Con ``stream`` la connessione si chiude appena si è letto l'esito.
+
+        Un 200 su una richiesta parziale resta sospetto anche così: può essere quel
+        server, oppure una pagina d'errore servita con esito positivo. Il tipo del
+        contenuto distingue le due cose, e un ``text/...`` non è un video.
+        """
+        try:
+            with self._client.stream(
+                "GET", url, headers={"Range": "bytes=0-1"}
+            ) as sonda:
+                if sonda.status_code == 206:
+                    return True
+                if sonda.status_code == 200:
+                    tipo = sonda.headers.get("content-type", "").lower()
+                    return not tipo.startswith("text/")
+                if sonda.status_code in (404, 410):
+                    return False
+                return None
+        except httpx.HTTPError:
+            return None
+
     def _at_quality(self, url: str, quality: str) -> str:
         """``url`` nella risoluzione preferita, se quella esiste davvero.
 
         E' una preferenza e non una garanzia, e la differenza e' deliberata: non tutti
-        gli episodi hanno tutte le risoluzioni (misurato: 1080p, 720p e 480p ci sono,
-        360p no), e saperlo in anticipo costerebbe una richiesta per ciascuna **prima**
-        di poter mostrare un menu. Si prova percio' solo quella chiesta; se non c'e', si
+        gli episodi hanno tutte le risoluzioni (misurato: «Akame ga Kill!» ha 720p e
+        480p e non ha il 1080p). Si prova percio' solo quella chiesta; se non c'e', si
         tiene quella che il portale ha dato.
+
+        Resta una rete di sicurezza anche adesso che :meth:`available_qualities` fa il
+        sondaggio in anticipo: quel sondaggio guarda un episodio e parla per tutta la
+        serie, e una puntata che si discosta deve comunque scaricarsi.
 
         Il ripiego va in quella direzione per un motivo: un episodio piu' pesante del
         voluto si scarica comunque, un episodio che non parte no. Fra le due, la scelta
@@ -287,12 +356,10 @@ class AnimeUnityClient:
         if not corrente or corrente.group(1) == voluta:
             return url
         candidato = QUALITY_RE.sub(f"/{voluta}p.mp4", url)
-        try:
-            # Due byte bastano a sapere se il file c'e': non si scarica nulla.
-            sonda = self._client.get(candidato, headers={"Range": "bytes=0-1"})
-        except httpx.HTTPError:
-            return url
-        return candidato if sonda.status_code in (200, 206) else url
+        # Qui «non si e' capito» e «non c'e'» portano allo stesso posto, e va bene: in
+        # dubbio si tiene l'indirizzo che il portale ha dato, che e' quello che
+        # funziona di sicuro.
+        return candidato if self._file_esiste(candidato) else url
 
     # ------------------------------------------------------------------ #
     # Binary fetches (posters + episode files)
