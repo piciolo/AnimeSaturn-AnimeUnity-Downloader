@@ -413,6 +413,159 @@ def main() -> int:
           finestra.settings.preferred_quality == "720p",
           "vale %r" % finestra.settings.preferred_quality)
 
+    print()
+    print("il sondaggio delle qualità disponibili:")
+    from gui.models import Anime
+
+    mw.choose_portal = lambda *a, **k: "animeunity"
+    finestra._change_portal()
+
+    def nascosta(riga):
+        return combo.view().isRowHidden(riga)
+
+    def voce(valore):
+        for i in range(combo.count()):
+            if combo.itemData(i) == valore:
+                return i, combo.model().item(i)
+        raise AssertionError("manca la voce %r" % valore)
+
+    finestra._detail_anime = Anime(
+        slug="akame-ga-kill", title="Akame ga Kill!", poster="", anime_type="TV",
+        dubbed=False, episodes_count=24, year="2014", score="8",
+        source_id="animeunity",
+    )
+
+    # «Akame ga Kill!» ha 720p e 480p, e non ha il 1080p: misurato con un 404
+    # sull'indirizzo fratello, con e senza intestazioni da browser.
+    finestra._apply_quality_availability(["720p", "480p"])
+    i1080, v1080 = voce("1080p")
+    i720, v720 = voce("720p")
+    prova("il 1080p che questo anime non ha sparisce dalla lista", nascosta(i1080))
+    prova("e la tastiera non ci può atterrare comunque", not v1080.isEnabled())
+    prova("il 720p che c'è resta nella lista", not nascosta(i720))
+    prova("e scegliibile", v720.isEnabled())
+    prova("e col nome pulito", combo.itemText(i720) == "720p",
+          "testo = %r" % combo.itemText(i720))
+    imigliore, vmigliore = voce("")
+    prova("«migliore disponibile» non sparisce mai: non promette una risoluzione",
+          not nascosta(imigliore) and vmigliore.isEnabled())
+    prova("e la preferenza salvata non viene toccata",
+          finestra.settings.preferred_quality == "720p",
+          "vale %r" % finestra.settings.preferred_quality)
+
+    print()
+    print("  e la lista corta si spiega, invece di sembrare un'app che ha perso roba:")
+    prova("l'etichetta porta la ⓘ, perché un consiglio invisibile non spiega niente",
+          "ⓘ" in finestra.quality_label.text(),
+          "etichetta = %r" % finestra.quality_label.text())
+    prova("e il consiglio dice che il menu elenca solo quelle che l'anime ha",
+          "solo le qualità" in finestra.quality_label.toolTip(),
+          "tooltip = %r" % finestra.quality_label.toolTip()[:90])
+    prova("dicendo anche quali sono",
+          "720p" in finestra.quality_label.toolTip()
+          and "480p" in finestra.quality_label.toolTip())
+    prova("e sta anche sulla tendina, non solo sull'etichetta",
+          finestra.quality_label.toolTip() == combo.toolTip())
+
+    # Il caso che conta: la preferenza È proprio quella che manca.
+    combo.setCurrentIndex(i1080)
+    finestra._apply_quality_availability(["720p", "480p"])
+    prova("scegliendo il 1080p la preferenza diventa 1080p",
+          finestra.settings.preferred_quality == "1080p",
+          "vale %r" % finestra.settings.preferred_quality)
+    prova("la tendina chiusa continua a mostrare la scelta, che è ciò che verrà "
+          "chiesto, e avvisa che qui non c'è",
+          "1080p" in combo.currentText() and "non c'è" in combo.currentText(),
+          "si legge %r" % combo.currentText())
+    prova("la sua riga però non è nella lista", nascosta(i1080))
+    prova("il consiglio dice cosa c'è al suo posto",
+          "720p" in combo.toolTip() and "480p" in combo.toolTip(),
+          "tooltip = %r" % combo.toolTip()[:100])
+    prova("e che la scelta resta salvata per gli altri anime",
+          "resta salvata" in combo.toolTip(),
+          "tooltip = %r" % combo.toolTip()[-120:])
+    prova("e la preferenza NON viene riscritta su una che esiste qui: "
+          "scaricare la legge da lì, e due stati si contraddicono",
+          finestra.settings.preferred_quality == "1080p",
+          "vale %r" % finestra.settings.preferred_quality)
+
+    # Cambiando anime il sondaggio precedente non vale più.
+    finestra._reset_quality_availability()
+    prova("aprendo un altro anime il 1080p torna nella lista",
+          not nascosta(i1080) and v1080.isEnabled())
+    prova("e il suo nome torna pulito", combo.itemText(i1080) == "1080p",
+          "testo = %r" % combo.itemText(i1080))
+
+    # Un sondaggio che non riesce è un «non lo so», non un «niente».
+    finestra._apply_quality_availability([])
+    prova("un sondaggio senza risposta lascia offerto tutto",
+          not nascosta(i1080) and v1080.isEnabled())
+
+    # La risposta si ricorda per (portale, anime): costa richieste vere.
+    finestra._on_qualities_probed(("animeunity", "akame-ga-kill"), ["720p", "480p"])
+    prova("la risposta si ricorda per questo anime",
+          finestra._quality_seen.get(("animeunity", "akame-ga-kill"))
+          == ["720p", "480p"],
+          "ricordato = %r" % (finestra._quality_seen,))
+
+    # Una risposta in ritardo per l'anime di prima non deve parlare di questo.
+    finestra._reset_quality_availability()
+    finestra._on_qualities_probed(("animeunity", "un-altro-anime"), ["480p"])
+    prova("una risposta in ritardo per un altro anime non restringe questo menu",
+          not nascosta(i1080) and not nascosta(i720))
+    # E una per lo STESSO slug su un altro portale non si confonde con questa: lo
+    # stesso anime su due portali non ha le stesse risoluzioni.
+    finestra._on_qualities_probed(("animesaturn", "akame-ga-kill"), ["480p"])
+    prova("lo stesso slug su un altro portale è un'altra cosa, e non restringe qui",
+          not nascosta(i1080) and not nascosta(i720))
+    prova("e si ricorda separato, non sovrascrive l'altro portale",
+          finestra._quality_seen.get(("animesaturn", "akame-ga-kill")) == ["480p"]
+          and finestra._quality_seen.get(("animeunity", "akame-ga-kill"))
+          == ["720p", "480p"],
+          "ricordato = %r" % (finestra._quality_seen,))
+    prova("ma si ricorda comunque, per quando ci si torna",
+          finestra._quality_seen.get(("animeunity", "un-altro-anime")) == ["480p"],
+          "ricordato = %r" % (finestra._quality_seen,))
+
+    print()
+    print("  con «Tutti i portali», che è lo stato di partenza:")
+    mw.choose_portal = lambda *a, **k: None
+    finestra._change_portal()
+    prova("si cerca davvero su tutti", len(finestra.sources.browsing) > 1,
+          "portali = %r" % [x.id for x in finestra.sources.browsing])
+
+    # Il portale che conta è quello della scheda aperta, non quelli su cui si cerca.
+    finestra._detail_anime = Anime(
+        slug="qualcosa", title="Qualcosa", poster="", anime_type="TV",
+        dubbed=False, episodes_count=12, year="2020", score="7",
+        source_id="animesaturn",
+    )
+    finestra._reset_quality_availability()
+    prova("sulla scheda di un anime di AnimeSaturn la tendina è spenta, "
+          "anche se si sta cercando anche su AnimeUnity",
+          not combo.isEnabled())
+    prova("e dice che è quel portale a servire un file solo",
+          "un file solo" in combo.toolTip()
+          and "AnimeSaturn" in combo.toolTip(),
+          "tooltip = %r" % combo.toolTip()[:110])
+
+    finestra._detail_anime = Anime(
+        slug="akame-ga-kill", title="Akame ga Kill!", poster="", anime_type="TV",
+        dubbed=False, episodes_count=24, year="2014", score="8",
+        source_id="animeunity",
+    )
+    finestra._reset_quality_availability()
+    prova("sulla scheda di un anime di AnimeUnity è accesa", combo.isEnabled())
+    prova("e NON promette una lista già ristretta: qui il sondaggio non ha "
+          "ancora risposto, e il menu le offre tutte",
+          "elenca solo" not in combo.toolTip(),
+          "tooltip = %r" % combo.toolTip()[:140])
+    prova("dice invece cosa succederà, che è vero",
+          "Appena il sondaggio risponde" in combo.toolTip(),
+          "tooltip = %r" % combo.toolTip()[:140])
+
+    finestra._detail_anime = None
+
     finestra.close()
     return 1 if guai else 0
 

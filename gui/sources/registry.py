@@ -110,6 +110,21 @@ class SourceRegistry:
             return None
         return portal if any(s.id == portal for s in self._sources) else None
 
+    def available_qualities(self, watch_path: str, source_id: str = "") -> list[str]:
+        """Le risoluzioni che esistono per questo episodio, chieste al suo portale.
+
+        Un portale che non ne offre, o che non riesce a rispondere, torna vuoto: chi
+        chiama non deve restringere niente. Nascondere una risoluzione che c'era e'
+        peggio che offrirne una che poi ripiega.
+        """
+        source = self.get(source_id)
+        if source is None:
+            return []
+        try:
+            return source.available_qualities(watch_path)
+        except Exception:  # noqa: BLE001 - un sondaggio non deve far fallire nulla
+            return []
+
     def all_quality_options(self) -> dict[str, str]:
         """Le qualita' che l'app puo' offrire **in assoluto**, portale attivo o meno.
 

@@ -60,6 +60,20 @@ class AnimeSource(ABC):
         """Browsable genres. Optional: a portal without a genre page returns nothing."""
         return []
 
+    def available_qualities(self, watch_path: str) -> list[str]:
+        """Le risoluzioni che esistono per QUESTO episodio, costi quel che costi.
+
+        Diverso da :meth:`quality_options`, che dice cosa il portale sa offrire in
+        generale: qui si parla di un episodio preciso, perche' la stessa serie puo'
+        avere il 1080p su una puntata e non sull'altra.
+
+        Vuoto vuol dire «non lo so» oppure «non c'e' scelta», e chi chiama deve
+        trattarlo come «non restringere nulla»: e' meglio offrire una risoluzione che
+        poi ripiega, che nasconderne una che c'era.
+        """
+        del watch_path
+        return []
+
     def quality_options(self) -> dict[str, str]:
         """Le qualita' fra cui si puo' scegliere su questo portale, etichetta -> valore.
 

@@ -171,6 +171,13 @@ class AnimeUnitySource(AnimeSource):
     def quality_options(self) -> dict[str, str]:
         return dict(QUALITY_OPTIONS)
 
+    def available_qualities(self, watch_path: str) -> list[str]:
+        try:
+            episode_id = int(str(watch_path).strip())
+        except (TypeError, ValueError):
+            return []
+        return self.client.available_qualities(episode_id)
+
     def expressible_filters(self) -> dict[str, set[str] | None]:
         """La lingua originale qui non esiste; degli altri, solo i valori tradotti.
 

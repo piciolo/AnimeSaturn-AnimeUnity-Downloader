@@ -66,6 +66,7 @@ from .workers import (
     AnimeUnityDomainWorker,
     DownloadTask,
     EpisodesWorker,
+    QualitiesWorker,
     GenresWorker,
     PosterWorker,
     SearchWorker,
@@ -195,6 +196,11 @@ class MainWindow(QMainWindow):
         #: La qualita' fa parte della chiave di proposito: lo stesso episodio in 480p e
         #: in 1080p sono due file diversi, e chiederli entrambi e' legittimo.
         self._in_flight: dict[int, tuple] = {}
+        # Le risoluzioni sondate, per (portale, anime). Si ricordano perche' il
+        # sondaggio costa richieste vere e la risposta non cambia mentre l'app e'
+        # aperta; e si ricordano per anime, non globalmente, perche' e' proprio da
+        # anime a anime che cambia.
+        self._quality_seen: dict[tuple[str, str], list[str]] = {}
         self._query: dict = {
             "title": "", "sort": "standard", "dub": "", "filters": {}, "page": 1,
         }
@@ -524,23 +530,197 @@ class MainWindow(QMainWindow):
 
         La preferenza **non** si cancella: spegnere un comando riguarda cosa si può
         scegliere adesso, non cosa resta scelto per quando si torna sull'altro portale.
+
+        Il portale che conta è quello **dell'anime aperto**, non quelli su cui si sta
+        cercando. Con «Tutti i portali» — che è lo stato di partenza, perché nessun
+        portale salvato vuol dire tutti — i secondi includono AnimeUnity: un anime di
+        AnimeSaturn mostrava così una tendina accesa, e prometteva di elencare «le
+        qualità che questo anime ha davvero». Su quel portale un episodio è un file
+        solo: la risoluzione scelta veniva lasciata cadere al download, in silenzio.
         """
         combo = getattr(self, "quality_combo", None)
         if combo is None or getattr(self, "sources", None) is None:
             return
-        offerte = self.sources.quality_options()
+        anime = getattr(self, "_detail_anime", None)
+        suo = self.sources.get(anime.source_id) if anime is not None else None
+        if suo is not None:
+            offerte = suo.quality_options()
+            nomi = portal_label(suo.id)
+        else:
+            # Nessuna scheda aperta: la tendina non è nemmeno in vista, e l'unica cosa
+            # sensata da dire riguarda i portali su cui si sta cercando.
+            offerte = self.sources.quality_options()
+            nomi = " / ".join(portal_label(s.id) for s in self.sources.browsing)
         combo.setEnabled(bool(offerte))
         self.quality_label.setEnabled(bool(offerte))
         if offerte:
-            combo.setToolTip(
-                "Vale per i download e per la riproduzione, e viene ricordata."
+            # Al futuro e non al presente: qui il sondaggio non ha ancora risposto, e
+            # dire che il menu «elenca solo» quelle vere sarebbe una promessa già
+            # scaduta — in questo stato il menu le offre tutte.
+            testo = (
+                "Vale per i download e per la riproduzione, e viene ricordata.\n\n"
+                "Appena il sondaggio risponde, il menu si restringe alle qualità che "
+                "questo anime ha davvero."
             )
         else:
-            nomi = " / ".join(portal_label(s.id) for s in self.sources.browsing)
-            combo.setToolTip(
+            testo = (
                 f"{nomi} serve un file solo per episodio: non c'è una qualità fra "
                 "cui scegliere. La tua scelta resta per gli altri portali."
             )
+        combo.setToolTip(testo)
+        # Sull'etichetta pure: e' lei che porta la «ⓘ», ed e' li' che si cerca.
+        self.quality_label.setToolTip(testo)
+
+    def _reset_quality_availability(self) -> None:
+        """Riporta il menu a offrire tutto, in attesa di sapere qualcosa di meglio.
+
+        Il «non lo so» di partenza va mostrato come «tutto disponibile» e non come
+        «niente»: un menu che si apre vuoto e poi si popola sembra rotto, e nel
+        frattempo impedirebbe di scegliere una risoluzione che probabilmente c'e'.
+        """
+        combo = getattr(self, "quality_combo", None)
+        if combo is None:
+            return
+        modello = combo.model()
+        for i in range(combo.count()):
+            voce = modello.item(i)
+            if voce is not None:
+                voce.setEnabled(True)
+            self._mostra_riga_qualita(i, True)
+            if i < len(getattr(self, "_quality_labels", [])):
+                combo.setItemText(i, self._quality_labels[i])
+        self._apply_portal_to_quality()
+
+    def _mostra_riga_qualita(self, riga: int, visibile: bool) -> None:
+        """Mostra o nasconde una riga nella **lista** della tendina.
+
+        Nascondere la riga e non rimuovere la voce: una tendina mostra sempre il testo
+        della voce scelta, e togliere la voce costringerebbe a mostrarne un'altra —
+        cioe' a far dire al comando una risoluzione diversa da quella che download e
+        riproduzione chiederanno. E ``removeItem`` farebbe scattare il segnale che
+        **salva** la preferenza, riscrivendo da solo una scelta che nessuno ha fatto.
+
+        La vista di una tendina e' una lista, ma e' Qt a deciderlo: se un giorno non lo
+        fosse piu', meglio una lista che non si accorcia che un errore in faccia a chi
+        voleva solo scegliere una risoluzione.
+        """
+        vista = self.quality_combo.view()
+        if hasattr(vista, "setRowHidden"):
+            vista.setRowHidden(riga, not visibile)
+
+    def _probe_quality_availability(self, episodes: list) -> None:
+        """Chiede quali risoluzioni ha questo anime, guardandone un episodio.
+
+        Un episodio e non tutti: sondarli tutti costerebbe richieste quante le puntate,
+        per scoprire quasi sempre la stessa cosa. L'approssimazione e' dichiarata, e il
+        caso in cui sbaglia -- una puntata diversa dalle altre -- resta coperto dal
+        ripiego al momento del download, che non e' stato tolto.
+        """
+        anime = self._detail_anime
+        combo = getattr(self, "quality_combo", None)
+        if anime is None or combo is None or not episodes:
+            return
+        sorgente = self.sources.get(anime.source_id)
+        if sorgente is None or not sorgente.quality_options():
+            return  # qui un episodio e' un file solo: non c'e' nulla da sondare
+
+        chiave = (anime.source_id, str(anime.key))
+        ricordate = self._quality_seen.get(chiave)
+        if ricordate is not None:
+            self._apply_quality_availability(ricordate)
+            return
+
+        watch_path = getattr(episodes[0], "watch_path", "") or ""
+        if not watch_path:
+            return
+        # La chiave viaggia col sondaggio e non viene ricostruita al ritorno: al
+        # ritorno il portale si leggerebbe dalla scheda aperta in quel momento, che puo'
+        # essere un'altra, e la risposta finirebbe ricordata sotto il portale sbagliato.
+        worker = QualitiesWorker(self.sources, chiave, watch_path, anime.source_id)
+        worker.signals.done.connect(self._on_qualities_probed)
+        self.io_pool.start(worker)
+
+    def _on_qualities_probed(self, chiave: object, disponibili: list) -> None:
+        chiave = tuple(chiave)
+        if disponibili:
+            self._quality_seen[chiave] = list(disponibili)
+        # Una risposta che arriva quando si guarda già un altro anime si ricorda ma non
+        # si applica: altrimenti il menu parlerebbe della scheda precedente.
+        anime = self._detail_anime
+        if anime is None or chiave != (anime.source_id, str(anime.key)):
+            return
+        self._apply_quality_availability(disponibili)
+
+    def _apply_quality_availability(self, disponibili: list) -> None:
+        """Spegne le risoluzioni che questo anime non ha, e scrive accanto perche'.
+
+        Spente e non rimosse: e' il modo già scelto in quest'app per i filtri che un
+        portale non sa esprimere, e dice all'utente «qui non c'e'» invece di lasciargli
+        credere che l'app sappia fare meno di quanto sa.
+
+        La voce scelta e la preferenza salvata non si toccano, nemmeno quando e' proprio
+        quella a mancare. Scaricare e riprodurre leggono la preferenza, non la tendina:
+        cambiarla qui vorrebbe dire o perdere una scelta che vale per gli altri anime, o
+        far dire alla tendina una cosa e al download un'altra. Quando manca, la tendina
+        chiusa lo legge da sola -- «1080p — non c'è» -- che e' l'avviso nel posto giusto,
+        accanto al pulsante, prima di premerlo.
+        """
+        combo = getattr(self, "quality_combo", None)
+        if combo is None or not disponibili:
+            return  # «non lo so»: si lascia offerto tutto
+        modello = combo.model()
+        for i in range(combo.count()):
+            valore = combo.itemData(i)
+            voce = modello.item(i)
+            if voce is None or not valore:
+                continue  # «Migliore disponibile» c'e' sempre: non ha nulla da negare
+            c_e = valore in disponibili
+            # Via dalla lista, non solo spenta: una voce spenta ma visibile fa chiedere
+            # «perche' non posso?», e la risposta -- questo anime non ce l'ha -- e' una
+            # cosa che si puo' semplicemente non proporre.
+            self._mostra_riga_qualita(i, c_e)
+            # Spenta anche nel modello: la vista nasconde la riga, ma le frecce della
+            # tastiera scorrono il modello e su una riga invisibile si atterrerebbe
+            # comunque. Spenta, la tastiera la salta.
+            voce.setEnabled(c_e)
+            pulito = self._quality_labels[i]
+            # Il testo conta solo per la voce scelta, che la tendina chiusa mostra
+            # anche quando la sua riga e' nascosta: li' tacere ingannerebbe.
+            combo.setItemText(i, pulito if c_e else f"{pulito} — non c'è")
+
+        self._spiega_qualita(disponibili)
+
+    def _spiega_qualita(self, disponibili: list) -> None:
+        """Dice perché la lista è corta, sul comando e sull'etichetta accanto.
+
+        Una lista che si accorcia da sola, senza una ragione leggibile, sembra un'app che
+        ha perso qualcosa — e la risoluzione mancante e' proprio quella che l'utente
+        aveva scelto, quindi e' la domanda che si fara' per prima.
+
+        Sull'etichetta e non solo sulla tendina: l'etichetta porta la «ⓘ», ed e' li' che
+        si va a cercare una spiegazione.
+        """
+        combo = self.quality_combo
+        elenco = ", ".join(disponibili)
+        testo = (
+            f"Il menu elenca solo le qualità che questo anime ha davvero: {elenco}. "
+            "Sono sondate su un episodio, quindi quelle che non ci sono non vengono "
+            "offerte."
+        )
+        corrente = combo.currentData()
+        if corrente and corrente not in disponibili:
+            # Cosa arrivera' al suo posto non lo si promette: il ripiego tiene
+            # l'indirizzo che il portale consegna, e qual è lo dice il download a cose
+            # fatte. Qui si dice solo cio' che si e' misurato.
+            testo += (
+                f"\n\nIl {corrente} che hai scelto qui non c'è: scaricando arriva una "
+                "fra quelle elencate, e il download dirà quale. La tua scelta resta "
+                "salvata per gli altri anime."
+            )
+        else:
+            testo += "\n\nVale per i download e per la riproduzione, e viene ricordata."
+        combo.setToolTip(testo)
+        self.quality_label.setToolTip(testo)
 
     def _make_combo(self, options: dict) -> QComboBox:
         """Return a combo whose items carry their filter value as item data."""
@@ -729,7 +909,9 @@ class MainWindow(QMainWindow):
         self.episodes_status.setObjectName("Muted")
         bottom.addWidget(self.episodes_status)
         bottom.addStretch(1)
-        self.quality_label = QLabel("Qualità:")
+        # La «ⓘ» non e' decorazione: il suggerimento spiega perche' la lista e' corta,
+        # e un suggerimento che nessuno sa di poter leggere non spiega niente.
+        self.quality_label = QLabel("Qualità ⓘ")
         self.quality_label.setObjectName("Muted")
         bottom.addWidget(self.quality_label)
         self.quality_combo = self._make_combo(self.sources.all_quality_options())
@@ -740,6 +922,12 @@ class MainWindow(QMainWindow):
             if self.quality_combo.itemData(i) == self.settings.preferred_quality:
                 self.quality_combo.setCurrentIndex(i)
                 break
+        # I nomi puliti, presi adesso: le voci spente ne portano uno allungato col
+        # motivo, e senza l'originale da qualche parte riaccenderle lo allungherebbe
+        # una seconda volta.
+        self._quality_labels = [
+            self.quality_combo.itemText(i) for i in range(self.quality_combo.count())
+        ]
         self.quality_combo.currentIndexChanged.connect(self._on_quality_changed)
         bottom.addWidget(self.quality_combo)
         self._apply_portal_to_quality()
@@ -1783,6 +1971,10 @@ class MainWindow(QMainWindow):
         self.episode_list.clear()
         self.episodes_status.setText("Caricamento episodi…")
         self.download_button.setEnabled(False)
+        # Il sondaggio dell'anime precedente non vale per questo: si riapre tutto e si
+        # richiede. Lasciarlo acceso mostrerebbe su «Naruto» cio' che si era scoperto
+        # su «Akame ga Kill!».
+        self._reset_quality_availability()
 
         count = max(anime.episodes_count, 1)
         self.range_from.setMaximum(count)
@@ -1879,6 +2071,7 @@ class MainWindow(QMainWindow):
             summary += "  ·  " + ", ".join(extra)
         self.episodes_status.setText(summary)
         self.download_button.setEnabled(bool(episodes))
+        self._probe_quality_availability(episodes)
 
     def _on_episodes_error(self, key: object, message: str) -> None:
         if not self._detail_anime or key != self._detail_anime.key:

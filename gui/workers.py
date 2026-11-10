@@ -261,6 +261,42 @@ class ResolveWorker(QRunnable):
             self.signals.error.emit(self.token, str(exc))
 
 
+class QualitiesSignals(QObject):
+    done = Signal(object, list)  # token, list[str] delle risoluzioni che esistono
+
+
+class QualitiesWorker(QRunnable):
+    """Chiede al portale quali risoluzioni esistono per un episodio, fuori dalla UI.
+
+    Costa quanto un risolvere piu' due sonde da due byte: poco, ma abbastanza da non
+    poterlo fare sul filo della finestra mentre la scheda si apre.
+
+    Non ha un segnale d'errore, e non per pigrizia: un sondaggio che non riesce non e'
+    un guasto da mostrare, e' solo un «non lo so» -- e a quel «non lo so» la risposta
+    giusta e' lasciare il menu com'era, cioe' offrire tutto. Nascondere una
+    risoluzione che c'era sarebbe peggio che offrirne una che poi ripiega.
+    """
+
+    def __init__(
+        self, client: object, token: object, watch_path: str, source_id: str = ""
+    ) -> None:
+        super().__init__()
+        self.client = client
+        self.token = token
+        self.watch_path = watch_path
+        self.source_id = source_id
+        self.signals = QualitiesSignals()
+
+    def run(self) -> None:
+        try:
+            disponibili = self.client.available_qualities(
+                self.watch_path, self.source_id
+            )
+        except Exception:  # noqa: BLE001 - vedi la docstring: silenzio, non errore
+            disponibili = []
+        self.signals.done.emit(self.token, list(disponibili))
+
+
 class DownloadSignals(QObject):
     # task_id, downloaded_bytes, total_bytes, speed_bytes_per_sec
     progress = Signal(int, int, int, float)
