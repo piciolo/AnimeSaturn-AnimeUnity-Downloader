@@ -341,6 +341,7 @@ class MainWindow(QMainWindow):
         # Prima di rilanciare: i filtri che il portale nuovo non sa esprimere vanno
         # spenti nel pannello *e* togliti dalla ricerca, o morderebbero da invisibili.
         self._apply_portal_to_filters()
+        self._apply_portal_to_quality()
         self._refresh_watch_views()
         if self.tabs.currentIndex() == self._favorites_tab_index:
             self._refresh_favorites()
@@ -491,6 +492,44 @@ class MainWindow(QMainWindow):
 
         box.addWidget(self._build_filter_panel())
         return box
+
+    def _on_quality_changed(self) -> None:
+        """La tendina **è** la preferenza: cambiarla la salva.
+
+        Un solo valore, non due. Una preferenza nelle impostazioni più una scelta
+        temporanea qui sarebbero due stati della stessa cosa, e due stati della stessa
+        cosa prima o poi si contraddicono — il modo in cui l'utente se ne accorge è
+        scaricare in una qualità diversa da quella che vede scritta accanto al pulsante.
+        """
+        self.settings.preferred_quality = self.quality_combo.currentData() or ""
+
+    def _apply_portal_to_quality(self) -> None:
+        """Spegne la scelta della qualità dove il portale non ne offre.
+
+        Su AnimeSaturn un episodio è un file solo: la tendina resta visibile ma spenta e
+        dice perché. Nasconderla la farebbe sembrare un pezzo di app perduto invece di
+        una possibilità che quel portale non ha — la stessa ragione per cui i filtri non
+        esprimibili si spengono invece di sparire.
+
+        La preferenza **non** si cancella: spegnere un comando riguarda cosa si può
+        scegliere adesso, non cosa resta scelto per quando si torna sull'altro portale.
+        """
+        combo = getattr(self, "quality_combo", None)
+        if combo is None or getattr(self, "sources", None) is None:
+            return
+        offerte = self.sources.quality_options()
+        combo.setEnabled(bool(offerte))
+        self.quality_label.setEnabled(bool(offerte))
+        if offerte:
+            combo.setToolTip(
+                "Vale per i download e per la riproduzione, e viene ricordata."
+            )
+        else:
+            nomi = " / ".join(portal_label(s.id) for s in self.sources.browsing)
+            combo.setToolTip(
+                f"{nomi} serve un file solo per episodio: non c'è una qualità fra "
+                "cui scegliere. La tua scelta resta per gli altri portali."
+            )
 
     def _make_combo(self, options: dict) -> QComboBox:
         """Return a combo whose items carry their filter value as item data."""
@@ -679,6 +718,21 @@ class MainWindow(QMainWindow):
         self.episodes_status.setObjectName("Muted")
         bottom.addWidget(self.episodes_status)
         bottom.addStretch(1)
+        self.quality_label = QLabel("Qualità:")
+        self.quality_label.setObjectName("Muted")
+        bottom.addWidget(self.quality_label)
+        self.quality_combo = self._make_combo(self.sources.all_quality_options())
+        # La scelta salvata PRIMA di collegare il segnale: dopo, il solo disegnarsi
+        # della finestra la riscriverebbe, e un comando che salva mentre nasce e' un
+        # comando che prima o poi salva qualcosa che nessuno ha scelto.
+        for i in range(self.quality_combo.count()):
+            if self.quality_combo.itemData(i) == self.settings.preferred_quality:
+                self.quality_combo.setCurrentIndex(i)
+                break
+        self.quality_combo.currentIndexChanged.connect(self._on_quality_changed)
+        bottom.addWidget(self.quality_combo)
+        self._apply_portal_to_quality()
+
         self.download_button = QPushButton("⬇  Scarica selezionati")
         self.download_button.setObjectName("Primary")
         self.download_button.clicked.connect(self._download_selected)

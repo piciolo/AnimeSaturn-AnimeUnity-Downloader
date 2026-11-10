@@ -376,6 +376,43 @@ def main() -> int:
     prova("e non resta nulla di vecchio da rifare",
           not finestra._catalog_stale)
 
+    print()
+    print("la scelta della qualità:")
+    combo = finestra.quality_combo
+    prova("la tendina offre le qualità che l'app può servire",
+          combo.count() == 4, "voci = %d" % combo.count())
+    prova("e la prima vale «nessun vincolo», cioè la migliore disponibile",
+          combo.itemData(0) == "", "itemData(0) = %r" % combo.itemData(0))
+
+    # Su AnimeSaturn un episodio è un file solo: niente fra cui scegliere.
+    mw.choose_portal = lambda *a, **k: "animesaturn"
+    finestra._change_portal()
+    prova("su AnimeSaturn la tendina è spenta", not combo.isEnabled())
+    prova("e dice perché, invece di sparire",
+          "un file solo" in combo.toolTip(),
+          "tooltip = %r" % combo.toolTip()[:80])
+
+    # Su AnimeUnity si sceglie, e la scelta si salva.
+    mw.choose_portal = lambda *a, **k: "animeunity"
+    finestra._change_portal()
+    prova("su AnimeUnity è accesa", combo.isEnabled())
+    for i in range(combo.count()):
+        if combo.itemData(i) == "720p":
+            combo.setCurrentIndex(i)
+            break
+    prova("scegliere 720p lo salva: la tendina È la preferenza, non una copia",
+          finestra.settings.preferred_quality == "720p",
+          "vale %r" % finestra.settings.preferred_quality)
+
+    # E tornando dove non si può scegliere, la scelta non si perde: spegnere un
+    # comando riguarda cosa si può scegliere, non cosa resta scelto.
+    mw.choose_portal = lambda *a, **k: "animesaturn"
+    finestra._change_portal()
+    prova("tornando su AnimeSaturn si rispegne", not combo.isEnabled())
+    prova("ma la scelta NON viene cancellata: vale per quando si torna",
+          finestra.settings.preferred_quality == "720p",
+          "vale %r" % finestra.settings.preferred_quality)
+
     finestra.close()
     return 1 if guai else 0
 

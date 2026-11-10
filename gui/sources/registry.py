@@ -110,6 +110,19 @@ class SourceRegistry:
             return None
         return portal if any(s.id == portal for s in self._sources) else None
 
+    def all_quality_options(self) -> dict[str, str]:
+        """Le qualita' che l'app puo' offrire **in assoluto**, portale attivo o meno.
+
+        Serve a costruire il comando una volta sola. :meth:`quality_options` dice invece
+        cosa si puo' scegliere *adesso*, e decide se quel comando va acceso: sono due
+        domande diverse, e confonderle lascerebbe una tendina vuota appena si apre l'app
+        sul portale che non offre scelte.
+        """
+        unite: dict[str, str] = {}
+        for source in self._sources:
+            unite.update(source.quality_options())
+        return unite
+
     def quality_options(self) -> dict[str, str]:
         """Le qualita' offerte da almeno uno dei portali attivi.
 
