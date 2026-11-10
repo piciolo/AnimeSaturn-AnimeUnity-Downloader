@@ -266,6 +266,20 @@ class DownloadSignals(QObject):
 class DownloadTask(QRunnable):
     """Resolve an episode's direct link and stream it to disk with progress."""
 
+    #: I file che qualche compito sta scrivendo adesso.
+    #:
+    #: La guardia all'accodamento non basta: quella conosce la qualita' *chiesta*, e il
+    #: nome del file usa quella *risolta*. Chiedere una risoluzione che l'episodio non
+    #: ha fa ripiegare su un'altra, e due richieste diverse finiscono sullo stesso file
+    #: -- misurato: su «Akame ga Kill!» il 1080p non esiste e torna il 720p.
+    #:
+    #: Qui invece si sa il percorso vero, e due compiti che scrivessero lo stesso
+    #: ``.part`` si corromperebbero a vicenda: il secondo scambia per un residuo
+    #: interrotto cio' che il primo sta ancora scrivendo, e riprende da un offset che
+    #: nel frattempo si muove.
+    _claimed: set = set()
+    _claim_lock = threading.Lock()
+
     def __init__(
         self,
         client: AnimeSaturnClient,
@@ -343,6 +357,7 @@ class DownloadTask(QRunnable):
         if self._cancel.is_set():
             self.signals.finished.emit(self.task_id, False, "Annullato")
             return
+        prenotato = None
         try:
             self.signals.status.emit(self.task_id, "Risoluzione link…")
             # Al portale da cui viene l'episodio, non al primo che capita: l'indirizzo
@@ -369,6 +384,17 @@ class DownloadTask(QRunnable):
                 self.signals.finished.emit(self.task_id, True, "Già presente")
                 return
 
+            with DownloadTask._claim_lock:
+                if dest_path in DownloadTask._claimed:
+                    # Non e' un errore: e' lo stesso file, gia' in arrivo. Si dice e si
+                    # lascia correre quello che e' partito prima.
+                    self.signals.finished.emit(
+                        self.task_id, True, "Già in download"
+                    )
+                    return
+                DownloadTask._claimed.add(dest_path)
+                prenotato = dest_path
+
             # Resuming when a leftover partial file exists.
             partial = dest_path.with_suffix(dest_path.suffix + ".part")
             resuming = partial.exists() and partial.stat().st_size > 0
@@ -392,3 +418,10 @@ class DownloadTask(QRunnable):
                 self.signals.finished.emit(self.task_id, False, "Annullato")
             else:
                 self.signals.finished.emit(self.task_id, False, f"Errore: {exc}")
+        finally:
+            # Comunque sia andata: una prenotazione non liberata bloccherebbe quel file
+            # per tutta la sessione, e il modo in cui l'utente se ne accorgerebbe e'
+            # che un episodio non si lascia piu' scaricare senza dire perche'.
+            if prenotato is not None:
+                with DownloadTask._claim_lock:
+                    DownloadTask._claimed.discard(prenotato)
